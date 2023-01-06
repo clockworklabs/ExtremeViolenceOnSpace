@@ -1,0 +1,19 @@
+[package]
+name = "extreme_violence_spacetimedb_server"
+version = "0.1.0"
+authors = ["Mario Montoya <mamcx@elmalabarista.com>"]
+edition = "2021"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+spacetimedb = { path = "/Users/mamcx/Proyectos/SpacetimeDB/crates/spacetimedb-bindings" }
+
+# Remember to revert this before releasing your game!.
+# If you remove the "dynamic" feature, your game executable can run standalone.
+bevy = { version = "0.9.1", features = ["dynamic"] }
+
+ggrs = "0.9.2"
+bevy_ggrs = { version = "0.10.0", features = ["wasm-bindgen"] }
