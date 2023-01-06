@@ -9,7 +9,7 @@ license = "MIT"
 crate-type = ["cdylib"]
 
 [dependencies]
-spacetimedb = { path = "/Users/mamcx/Proyectos/SpacetimeDB/crates/spacetimedb-bindings" }
+spacetimedb = { path = "../../SpacetimeDB/crates/spacetimedb-bindings" }
 
 # Remember to revert this before releasing your game!.
 # If you remove the "dynamic" feature, your game executable can run standalone.
