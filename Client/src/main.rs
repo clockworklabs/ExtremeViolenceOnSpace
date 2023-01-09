@@ -4,6 +4,29 @@ use bevy::prelude::*;
 use bevy::render::camera::ScalingMode;
 use bevy::tasks::IoTaskPool;
 use bevy_ggrs::*;
+use extreme_violence_spacetimedb_client::web_socket::Client;
+use ggrs::InputStatus;
+use std::str::FromStr;
+use url::Url;
+
+enum PlayerId {
+    One,
+    Two,
+}
+
+#[derive(Component)]
+struct Player {
+    handle: PlayerId,
+}
+
+impl Player {
+    pub fn as_idx(&self) -> usize {
+        match self.handle {
+            PlayerId::One => 0,
+            PlayerId::Two => 1,
+        }
+    }
+}
 
 struct GgrsConfig;
 
@@ -21,20 +44,11 @@ const INPUT_LEFT: u8 = 1 << 2;
 const INPUT_RIGHT: u8 = 1 << 3;
 const INPUT_FIRE: u8 = 1 << 4;
 
-enum PlayerId {
-    One,
-    Two,
-}
-
-#[derive(Component)]
-struct Player {
-    handle: PlayerId,
-}
-
-fn spawn_players(mut commands: Commands) {
+fn spawn_players(mut commands: Commands, mut rip: ResMut<RollbackIdProvider>) {
     // Player 1
     commands
         .spawn_bundle(SpriteBundle {
+            transform: Transform::from_translation(Vec3::new(-2., 0., 0.)),
             sprite: Sprite {
                 color: Color::rgb(0., 0.47, 1.),
                 custom_size: Some(Vec2::new(1., 1.)),
@@ -44,7 +58,8 @@ fn spawn_players(mut commands: Commands) {
         })
         .insert(Player {
             handle: PlayerId::One,
-        });
+        })
+        .insert(Rollback::new(rip.next_id()));
 
     // Player 2
     commands
@@ -59,46 +74,112 @@ fn spawn_players(mut commands: Commands) {
         })
         .insert(Player {
             handle: PlayerId::Two,
-        });
+        })
+        .insert(Rollback::new(rip.next_id()));
 }
 
-fn move_players(keys: Res<Input<KeyCode>>, mut player_query: Query<&mut Transform, With<Player>>) {
-    let mut direction = Vec2::ZERO;
+fn input(_: In<ggrs::PlayerHandle>, keys: Res<Input<KeyCode>>) -> u8 {
+    let mut input = 0u8;
 
     if keys.any_pressed([KeyCode::Up, KeyCode::W]) {
-        direction.y += 1.;
+        input |= INPUT_UP;
     }
     if keys.any_pressed([KeyCode::Down, KeyCode::S]) {
-        direction.y -= 1.;
-    }
-    if keys.any_pressed([KeyCode::Right, KeyCode::D]) {
-        direction.x += 1.;
+        input |= INPUT_DOWN;
     }
     if keys.any_pressed([KeyCode::Left, KeyCode::A]) {
-        direction.x -= 1.;
+        input |= INPUT_LEFT
     }
-    if direction == Vec2::ZERO {
-        return;
+    if keys.any_pressed([KeyCode::Right, KeyCode::D]) {
+        input |= INPUT_RIGHT;
+    }
+    if keys.any_pressed([KeyCode::Space, KeyCode::Return]) {
+        input |= INPUT_FIRE;
     }
 
-    let move_speed = 0.13;
-    let move_delta = (direction * move_speed).extend(0.);
+    input
+}
 
-    for mut transform in player_query.iter_mut() {
+fn move_players(
+    inputs: Res<PlayerInputs<GgrsConfig>>,
+    mut player_query: Query<(&mut Transform, &Player)>,
+) {
+    for (mut transform, player) in player_query.iter_mut() {
+        let (input, _) = inputs[player.as_idx()];
+
+        let mut direction = Vec2::ZERO;
+
+        if input & INPUT_UP != 0 {
+            direction.y += 1.;
+        }
+        if input & INPUT_DOWN != 0 {
+            direction.y -= 1.;
+        }
+        if input & INPUT_RIGHT != 0 {
+            direction.x += 1.;
+        }
+        if input & INPUT_LEFT != 0 {
+            direction.x -= 1.;
+        }
+        if direction == Vec2::ZERO {
+            continue;
+        }
+
+        let move_speed = 0.13;
+        let move_delta = (direction * move_speed).extend(0.);
+
         transform.translation += move_delta;
     }
 }
 
 fn start_matchbox_socket(mut commands: Commands) {
-    // let room_url = "ws://127.0.0.1:3536/extreme_bevy?next=2";
-    // info!("connecting to matchbox server: {:?}", room_url);
+    // var url = new Uri($"ws://{host}/database/subscribe?name_or_address={nameOrAddress}");
+
+    let room_url =
+        "ws://127.0.0.1:3000/database/subscribe?name_or_address=extreme_violence_spacetimedb";
+    info!("connecting to spacetimedb server: {:?}", room_url);
+
+    let mut client = Client::new();
+    client.connect(Url::from_str(room_url).unwrap());
+
     // let (socket, message_loop) = WebRtcSocket::new(room_url);
     //
-    // // The message loop needs to be awaited, or nothing will happen.
-    // // We do this here using bevy's task system.
-    // IoTaskPool::get().spawn(message_loop).detach();
+    // The message loop needs to be awaited, or nothing will happen.
+    // We do this here using bevy's task system.
+    //IoTaskPool::get().spawn(client.send_message()).detach();
     //
-    // commands.insert_resource(Some(socket));
+    //commands.insert_resource(Some(client));
+    commands.insert_resource(client);
+}
+
+pub struct QuinnetServerPlugin {}
+
+impl Default for QuinnetServerPlugin {
+    fn default() -> Self {
+        Self {}
+    }
+}
+
+fn create_server(mut commands: Commands, runtime: Res<Client>) {
+    let room_url = "ws://127.0.0.1:3000/database/subscribe?name_or_address=";
+    info!("connecting to spacetimedb server: {:?}", room_url);
+
+    let mut client = Client::new();
+    client.connect(Url::from_str(room_url).unwrap());
+
+    commands.insert_resource(client);
+}
+
+impl Plugin for QuinnetServerPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_startup_system_to_stage(StartupStage::PreStartup, create_server)
+        //    .add_system_to_stage(CoreStage::PreUpdate, update_sync_server)
+        ;
+
+        if app.world.get_resource_mut::<Client>().is_none() {
+            app.insert_resource(Client::new());
+        }
+    }
 }
 
 fn setup(mut commands: Commands) {
@@ -121,5 +202,6 @@ fn main() {
         .add_startup_system(setup)
         .add_startup_system(spawn_players)
         .add_system(move_players)
+        .add_startup_system(start_matchbox_socket)
         .run();
 }
