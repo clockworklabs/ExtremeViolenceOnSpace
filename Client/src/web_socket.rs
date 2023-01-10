@@ -1,5 +1,4 @@
 use std::any::Any;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow;
@@ -128,7 +127,7 @@ impl Client {
             .method("GET")
             .header(HOST, endpoint.host_str().unwrap_or_default())
             .header(CONNECTION, "upgrade")
-            .header(SEC_WEBSOCKET_PROTOCOL, protocol)
+            .header(SEC_WEBSOCKET_PROTOCOL, "v1.text.spacetimedb")
             .header(UPGRADE, "websocket")
             .header(SEC_WEBSOCKET_VERSION, "13")
             .header(SEC_WEBSOCKET_ACCEPT, accept_key(key.as_bytes()))
@@ -143,6 +142,8 @@ impl Client {
         let event_loop = async move {
             let (ws_stream, _) = connect_async(request).await.expect("Failed to connect");
             let (mut write, read) = ws_stream.split();
+
+            dbg!("connected");
             ev_tx
                 .send(NetworkEvent::Connected(ConnectionHandle {
                     uuid: uuid::Uuid::nil(),
@@ -246,13 +247,13 @@ mod tests {
     #[test]
     fn test_connect() {
         let room_url =
-            "ws://127.0.0.1:3000/database/subscribe?name_or_address=extreme_violence_spacetimedb";
+            "ws://127.0.0.1:3000/database/subscribe?name_or_address=extremeviolenceonspace";
         info!("connecting to spacetimedb server: {:?}", room_url);
 
         let mut client = Client::new();
         client.connect(Url::from_str(room_url).unwrap());
 
-        sleep(Duration::from_secs(10));
+        sleep(Duration::from_secs(1));
 
         dbg!("Connected");
     }
