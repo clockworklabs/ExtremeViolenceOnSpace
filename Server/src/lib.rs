@@ -17,3 +17,8 @@ pub fn say_hello(_sender: Hash, _timestamp: u64) {
     }
     println!("Hello, World!");
 }
+
+#[spacetimedb(connect)]
+pub fn identity_connected(identity: Hash, _timestamp: u64) {}
+#[spacetimedb(disconnect)]
+pub fn identity_disconnected(identity: Hash, _timestamp: u64) {}
