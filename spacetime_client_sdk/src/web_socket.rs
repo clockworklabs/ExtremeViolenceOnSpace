@@ -1,53 +1,16 @@
-use std::any::Any;
 use std::sync::Arc;
 
-use anyhow;
-use bevy::prelude::{Deref, DerefMut, Resource};
+use crate::ws::{build_req, BuildConnection};
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
 use digest::core_api::CoreWrapper;
-use digest::Digest;
 use futures::{join, SinkExt, StreamExt};
 use log::{error, warn};
-use serde::{Deserialize, Serialize};
 use sha1::Sha1Core;
 use tokio::{runtime::Runtime, task::JoinHandle};
 use tokio_tungstenite::connect_async;
-use tungstenite::http::header::{
-    CONNECTION, HOST, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_PROTOCOL,
-    SEC_WEBSOCKET_VERSION, UPGRADE,
-};
-use tungstenite::http::{Request, Uri};
+use tungstenite::http::Uri;
 use url::Url;
 use uuid::Uuid;
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct Envelope {
-    #[serde(rename(serialize = "t", deserialize = "t"))]
-    pub message_type: String,
-    #[serde(rename(serialize = "d", deserialize = "d"))]
-    pub payload: Box<serde_json::value::RawValue>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct SendEnveloppe<T> {
-    #[serde(rename(serialize = "t", deserialize = "t"))]
-    pub message_type: String,
-    #[serde(rename(serialize = "d", deserialize = "d"))]
-    pub payload: T,
-}
-
-pub trait MessageType: Any + serde::de::DeserializeOwned + Send + Sync {
-    fn message_type() -> &'static str;
-}
-
-type Df = Box<dyn Send + Fn(&serde_json::value::RawValue) -> anyhow::Result<Box<dyn Any + Send>>>;
-
-fn generate_deserialize_fn<T: Any>() -> Df
-where
-    T: serde::de::DeserializeOwned + Send,
-{
-    Box::new(|v: &serde_json::value::RawValue| Ok(Box::new(serde_json::from_str::<T>(v.get())?)))
-}
 
 #[derive(Debug, Clone, Default)]
 pub struct ConnectionHandle {
@@ -78,16 +41,6 @@ pub enum NetworkEvent {
 
 pub type Sha1 = CoreWrapper<Sha1Core>;
 
-fn accept_key(key: &[u8]) -> String {
-    const WS_GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-    let mut sha1 = Sha1::new();
-    sha1.update(key);
-    sha1.update(WS_GUID);
-    let digest = sha1.finalize();
-    base64::encode(digest)
-}
-
-#[derive(Resource)]
 pub struct Client {
     rt: Arc<Runtime>,
     handle: Option<JoinHandle<()>>,
@@ -121,20 +74,8 @@ impl Client {
     }
 
     pub fn connect(&mut self, endpoint: Url) {
-        let protocol = "v1.bin.spacetimedb";
-        let key = tungstenite::handshake::client::generate_key();
-        let request = Request::builder()
-            .method("GET")
-            .header(HOST, endpoint.host_str().unwrap_or_default())
-            .header(CONNECTION, "upgrade")
-            .header(SEC_WEBSOCKET_PROTOCOL, "v1.text.spacetimedb")
-            .header(UPGRADE, "websocket")
-            .header(SEC_WEBSOCKET_VERSION, "13")
-            .header(SEC_WEBSOCKET_ACCEPT, accept_key(key.as_bytes()))
-            .header(SEC_WEBSOCKET_KEY, key)
-            .uri(endpoint.as_str().parse::<Uri>().unwrap())
-            .body(())
-            .expect("Failed to build request");
+        let url = BuildConnection::new(endpoint.as_str().parse::<Uri>().unwrap());
+        let request = build_req(url).body(()).expect("Failed to build request");
 
         let (ev_tx, ev_rx) = unbounded();
         let (from_handler_tx, from_handler_rx) = unbounded();
@@ -155,7 +96,7 @@ impl Client {
                         Err(e) => {
                             error!("failed to receive message: {:?}", e);
                         }
-                        Ok(tokio_tungstenite::tungstenite::Message::Binary(bts)) => {
+                        Ok(tungstenite::Message::Binary(bts)) => {
                             ev_tx
                                 .send(NetworkEvent::Message(
                                     ConnectionHandle {
@@ -213,16 +154,6 @@ impl Client {
             warn!("trying to receive message with an uninitialized client");
             None
         }
-    }
-
-    pub fn send_message<T: MessageType + Serialize + Clone>(&self, msg: &T) {
-        let sev = SendEnveloppe {
-            message_type: T::message_type().to_string(),
-            payload: msg.clone(),
-        };
-        let payload =
-            tokio_tungstenite::tungstenite::Message::Binary(serde_json::to_vec(&sev).unwrap());
-        self.send_raw_message(payload)
     }
 
     pub fn send_raw_message(&self, msg: tokio_tungstenite::tungstenite::Message) {

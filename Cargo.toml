@@ -1,5 +1,5 @@
 [workspace]
-members = ["Client", "Server"]
+members = ["Client", "Server", "spacetime_client_sdk"]
 resolver = "2" # Important! wgpu/Bevy needs this!
 
 [profile.release]

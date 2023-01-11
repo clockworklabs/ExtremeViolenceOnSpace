@@ -1,20 +1,41 @@
 //! A simplified implementation of the classic game "Breakout".
+mod bevy_ws;
+mod components;
+mod input;
 
+use crate::bevy_ws::{message_system, setup_net, ClientMSG};
+use crate::components::*;
+use crate::input::*;
+use bevy::math::Vec3Swizzles;
 use bevy::prelude::*;
-use bevy::render::camera::ScalingMode;
-use bevy::tasks::IoTaskPool;
+use bevy_asset_loader::prelude::*;
 use bevy_ggrs::*;
-use extreme_violence_spacetimedb_client::web_socket::Client;
-use ggrs::InputStatus;
-use std::str::FromStr;
-use url::Url;
+use ggrs::{Message, NonBlockingSocket, PlayerType};
 
+#[derive(Clone, Eq, PartialEq, Debug, Hash)]
+enum GameState {
+    AssetLoading,
+    Matchmaking,
+    InGame,
+}
+
+#[derive(AssetCollection, Resource)]
+struct ImageAssets {
+    #[asset(path = "Alien.png")]
+    alien: Handle<Image>,
+    #[asset(path = "CowBoy.png")]
+    cowboy: Handle<Image>,
+}
+
+const MAP_SIZE: i32 = 41;
+
+#[derive(Copy, Clone, PartialEq, Eq)]
 enum PlayerId {
     One,
     Two,
 }
 
-#[derive(Component)]
+#[derive(Component, PartialEq, Eq)]
 struct Player {
     handle: PlayerId,
 }
@@ -38,109 +59,90 @@ impl ggrs::Config for GgrsConfig {
     type Address = String;
 }
 
-const INPUT_UP: u8 = 1 << 0;
-const INPUT_DOWN: u8 = 1 << 1;
-const INPUT_LEFT: u8 = 1 << 2;
-const INPUT_RIGHT: u8 = 1 << 3;
-const INPUT_FIRE: u8 = 1 << 4;
+fn spawn_players(mut commands: Commands, asset_server: Res<AssetServer>) {
+    //, mut rip: ResMut<RollbackIdProvider>
+    commands.spawn(SpriteBundle {
+        transform: Transform::from_scale(Vec3::new(1.5, 1.5, 0.0)),
+        texture: asset_server.load("images/Background.png"),
+        ..Default::default()
+    });
 
-fn spawn_players(mut commands: Commands, mut rip: ResMut<RollbackIdProvider>) {
+    let size = 300.;
+
     // Player 1
     commands
-        .spawn_bundle(SpriteBundle {
-            transform: Transform::from_translation(Vec3::new(-2., 0., 0.)),
+        .spawn(SpriteBundle {
+            transform: Transform::from_translation(Vec3::new(-200., 0., 100.)),
             sprite: Sprite {
-                color: Color::rgb(0., 0.47, 1.),
-                custom_size: Some(Vec2::new(1., 1.)),
+                custom_size: Some(Vec2::new(size, size)),
                 ..default()
             },
+            texture: asset_server.load("images/CowBoy.png0001.png"),
             ..default()
         })
         .insert(Player {
             handle: PlayerId::One,
         })
-        .insert(Rollback::new(rip.next_id()));
+        .insert(BulletReady(true))
+        .insert(MoveDir(-Vec2::X))
+    //    .insert(Rollback::new(rip.next_id()))
+    ;
 
     // Player 2
     commands
-        .spawn_bundle(SpriteBundle {
-            transform: Transform::from_translation(Vec3::new(2., 0., 0.)),
+        .spawn(SpriteBundle {
+            transform: Transform::from_translation(Vec3::new(200., 0., 100.)),
             sprite: Sprite {
-                color: Color::rgb(1.57, 0.37, 0.66),
-                custom_size: Some(Vec2::new(1., 1.)),
+                custom_size: Some(Vec2::new(size, size)),
                 ..default()
             },
+            texture: asset_server.load("images/Alien.png0001.png"),
             ..default()
         })
         .insert(Player {
             handle: PlayerId::Two,
         })
-        .insert(Rollback::new(rip.next_id()));
-}
-
-fn input(_: In<ggrs::PlayerHandle>, keys: Res<Input<KeyCode>>) -> u8 {
-    let mut input = 0u8;
-
-    if keys.any_pressed([KeyCode::Up, KeyCode::W]) {
-        input |= INPUT_UP;
-    }
-    if keys.any_pressed([KeyCode::Down, KeyCode::S]) {
-        input |= INPUT_DOWN;
-    }
-    if keys.any_pressed([KeyCode::Left, KeyCode::A]) {
-        input |= INPUT_LEFT
-    }
-    if keys.any_pressed([KeyCode::Right, KeyCode::D]) {
-        input |= INPUT_RIGHT;
-    }
-    if keys.any_pressed([KeyCode::Space, KeyCode::Return]) {
-        input |= INPUT_FIRE;
-    }
-
-    input
+        .insert(BulletReady(true))
+        .insert(MoveDir(Vec2::X))
+    //    .insert(Rollback::new(rip.next_id()))
+    ;
 }
 
 fn move_players(
     inputs: Res<PlayerInputs<GgrsConfig>>,
-    mut player_query: Query<(&mut Transform, &Player)>,
+    mut player_query: Query<(&mut Transform, &mut MoveDir, &Player)>,
 ) {
-    for (mut transform, player) in player_query.iter_mut() {
+    for (mut transform, mut move_direction, player) in player_query.iter_mut() {
         let (input, _) = inputs[player.as_idx()];
+        let direction = direction(input);
 
-        let mut direction = Vec2::ZERO;
-
-        if input & INPUT_UP != 0 {
-            direction.y += 1.;
-        }
-        if input & INPUT_DOWN != 0 {
-            direction.y -= 1.;
-        }
-        if input & INPUT_RIGHT != 0 {
-            direction.x += 1.;
-        }
-        if input & INPUT_LEFT != 0 {
-            direction.x -= 1.;
-        }
         if direction == Vec2::ZERO {
             continue;
         }
 
-        let move_speed = 0.13;
-        let move_delta = (direction * move_speed).extend(0.);
+        move_direction.0 = direction;
 
-        transform.translation += move_delta;
+        let move_speed = 0.13;
+        let move_delta = direction * move_speed;
+
+        let old_pos = transform.translation.xy();
+        let limit = Vec2::splat(MAP_SIZE as f32 / 2. - 0.5);
+        let new_pos = (old_pos + move_delta).clamp(-limit, limit);
+
+        transform.translation.x = new_pos.x;
+        transform.translation.y = new_pos.y;
     }
 }
 
 fn start_matchbox_socket(mut commands: Commands) {
     // var url = new Uri($"ws://{host}/database/subscribe?name_or_address={nameOrAddress}");
-
-    let room_url =
-        "ws://127.0.0.1:3000/database/subscribe?name_or_address=extreme_violence_spacetimedb";
-    info!("connecting to spacetimedb server: {:?}", room_url);
-
-    let mut client = Client::new();
-    client.connect(Url::from_str(room_url).unwrap());
+    //
+    // let room_url =
+    //     "ws://127.0.0.1:3000/database/subscribe?name_or_address=extreme_violence_spacetimedb";
+    // info!("connecting to spacetimedb server: {:?}", room_url);
+    //
+    // let mut client = Client::new();
+    // client.connect(Url::from_str(room_url).unwrap());
 
     // let (socket, message_loop) = WebRtcSocket::new(room_url);
     //
@@ -149,47 +151,157 @@ fn start_matchbox_socket(mut commands: Commands) {
     //IoTaskPool::get().spawn(client.send_message()).detach();
     //
     //commands.insert_resource(Some(client));
-    commands.insert_resource(client);
+    // commands.insert_resource(client);
+}
+//
+// pub struct QuinnetServerPlugin {}
+//
+// impl Default for QuinnetServerPlugin {
+//     fn default() -> Self {
+//         Self {}
+//     }
+// }
+//
+// fn create_server(mut commands: Commands, runtime: Res<Client>) {
+//     let room_url = "ws://127.0.0.1:3000/database/subscribe?name_or_address=";
+//     info!("connecting to spacetimedb server: {:?}", room_url);
+//
+//     let mut client = Client::new();
+//     client.connect(Url::from_str(room_url).unwrap());
+//
+//     commands.insert_resource(client);
+// }
+//
+// impl Plugin for QuinnetServerPlugin {
+//     fn build(&self, app: &mut App) {
+//         app.add_startup_system_to_stage(StartupStage::PreStartup, create_server)
+//         //    .add_system_to_stage(CoreStage::PreUpdate, update_sync_server)
+//         ;
+//
+//         if app.world.get_resource_mut::<Client>().is_none() {
+//             app.insert_resource(Client::new());
+//         }
+//     }
+// }
+
+fn setup(mut commands: Commands) {
+    let camera_bundle = Camera2dBundle::default();
+    //camera_bundle.projection.scaling_mode = ScalingMode::FixedVertical(10.);
+    commands.spawn(camera_bundle);
+
+    setup_net(commands)
 }
 
-pub struct QuinnetServerPlugin {}
+struct MsgRec {}
 
-impl Default for QuinnetServerPlugin {
-    fn default() -> Self {
-        Self {}
+impl NonBlockingSocket<String> for MsgRec {
+    fn send_to(&mut self, msg: &Message, addr: &String) {}
+
+    fn receive_all_messages(&mut self) -> Vec<(String, Message)> {
+        vec![]
     }
 }
 
-fn create_server(mut commands: Commands, runtime: Res<Client>) {
-    let room_url = "ws://127.0.0.1:3000/database/subscribe?name_or_address=";
-    info!("connecting to spacetimedb server: {:?}", room_url);
+fn wait_for_players(
+    mut commands: Commands,
+    mut socket: ResMut<ClientMSG>,
+    mut state: ResMut<State<GameState>>,
+) {
+    let socket = socket.as_mut();
 
-    let mut client = Client::new();
-    client.connect(Url::from_str(room_url).unwrap());
+    // // If there is no socket we've already started the game
+    // if socket.is_none() {
+    //     return;
+    // }
+    //
+    // // Check for new connections
+    // socket.as_mut().unwrap().accept_new_connections();
+    // let players = socket.as_ref().unwrap().players();
+    //
+    // let num_players = 2;
+    // if players.len() < num_players {
+    //     return; // wait for more players
+    // }
 
-    commands.insert_resource(client);
+    info!("All peers have joined, going in-game");
+    // create a GGRS P2P session
+    let mut session_builder = ggrs::SessionBuilder::<GgrsConfig>::new()
+        .with_num_players(2)
+        .with_input_delay(2);
+
+    for (player_handle, player) in socket.clients.lock().unwrap().iter() {
+        session_builder = session_builder
+            .add_player(
+                PlayerType::Remote(player_handle.to_string()),
+                *player_handle as usize,
+            )
+            .expect("failed to add player");
+    }
+
+    // move the socket out of the resource (required because GGRS takes ownership of it)
+    let socket = socket.client_to_game_receiver.clone();
+
+    // start the GGRS session
+    let session = session_builder
+        .start_p2p_session(MsgRec {})
+        //.start_synctest_session()
+        .expect("failed to start session");
+
+    commands.insert_resource(Session::P2PSession(session));
+
+    state.set(GameState::InGame).unwrap();
 }
 
-impl Plugin for QuinnetServerPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_startup_system_to_stage(StartupStage::PreStartup, create_server)
-        //    .add_system_to_stage(CoreStage::PreUpdate, update_sync_server)
-        ;
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
+struct LocalPlayerHandle(usize);
 
-        if app.world.get_resource_mut::<Client>().is_none() {
-            app.insert_resource(Client::new());
+fn camera_follow(
+    player_handle: Option<Res<LocalPlayerHandle>>,
+    player_query: Query<(&Player, &Transform)>,
+    mut camera_query: Query<&mut Transform, (With<Camera>, Without<Player>)>,
+) {
+    let player_handle = match player_handle {
+        Some(handle) => handle.0,
+        None => return, // Session hasn't started yet
+    };
+
+    for (player, player_transform) in player_query.iter() {
+        if player.as_idx() != player_handle {
+            continue;
+        }
+
+        let pos = player_transform.translation;
+
+        for mut transform in camera_query.iter_mut() {
+            transform.translation.x = pos.x;
+            transform.translation.y = pos.y;
         }
     }
 }
 
-fn setup(mut commands: Commands) {
-    let mut camera_bundle = Camera2dBundle::default();
-    camera_bundle.projection.scaling_mode = ScalingMode::FixedVertical(10.);
-    commands.spawn_bundle(camera_bundle);
-}
+const TIMESTEP_5_PER_SECOND: f64 = 30.0 / 60.0;
 
 fn main() {
-    App::new()
+    //env_logger::init();
+
+    let mut app = App::new();
+
+    // GGRSPlugin::<GgrsConfig>::new()
+    //     .with_input_system(input)
+    //     .with_rollback_schedule(Schedule::default().with_stage(
+    //         "ROLLBACK_STAGE",
+    //         SystemStage::single_threaded().with_system(move_players),
+    //     ))
+    //     .register_rollback_component::<Transform>()
+    //     .build(&mut app);
+
+    app.add_state(GameState::AssetLoading)
+        .add_loading_state(
+            LoadingState::new(GameState::AssetLoading)
+                .with_collection::<ImageAssets>()
+                .continue_to_state(GameState::Matchmaking),
+        )
+        .insert_resource(ClearColor(Color::rgb(0.53, 0.53, 0.53)))
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             window: WindowDescriptor {
                 title: "SpacetimeDB Game".into(),
@@ -198,10 +310,35 @@ fn main() {
             },
             ..default()
         }))
-        .insert_resource(ClearColor(Color::rgb(0.0, 0.0, 0.20)))
-        .add_startup_system(setup)
-        .add_startup_system(spawn_players)
-        .add_system(move_players)
-        .add_startup_system(start_matchbox_socket)
+        .add_system_set(
+            SystemSet::on_enter(GameState::Matchmaking)
+                .with_system(start_matchbox_socket)
+                .with_system(setup),
+        )
+        .add_system_set(SystemSet::on_update(GameState::Matchmaking).with_system(wait_for_players))
+        .add_system_set(SystemSet::on_enter(GameState::InGame).with_system(message_system))
+        .add_system_set(SystemSet::on_enter(GameState::InGame).with_system(spawn_players))
+        .add_system_set(SystemSet::on_update(GameState::InGame).with_system(camera_follow))
+        .add_system(bevy::window::close_on_esc)
         .run();
+
+    // app.add_plugins(DefaultPlugins.set(WindowPlugin {
+    //     window: WindowDescriptor {
+    //         title: "SpacetimeDB Game".into(),
+    //         fit_canvas_to_parent: true,
+    //         ..default()
+    //     },
+    //     ..default()
+    // }))
+    // .insert_resource(ScheduleRunnerSettings::run_loop(Duration::from_secs_f64(
+    //     TIMESTEP_5_PER_SECOND,
+    // )))
+    // .insert_resource(ClearColor(Color::rgb(0.0, 0.0, 0.20)))
+    // .add_startup_system(setup)
+    // .add_startup_system(spawn_players)
+    // // .add_system(wait_for_players)
+    // .add_system(message_system)
+    // //.add_startup_system(start_matchbox_socket)
+    // .add_system(bevy::window::close_on_esc)
+    // .run();
 }
