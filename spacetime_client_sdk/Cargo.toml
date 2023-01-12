@@ -8,18 +8,22 @@ edition = "2021"
 spacetimedb = "0.3.1"
 
 anyhow = "1.0.68"
+base64 = "0.21.0"
 crossbeam-channel = "0.5.6"
-log = "0.4.17"
+digest = "0.10.6"
 futures = "0.3.25"
+futures-util = { version = "0.3", default-features = false, features = ["async-await", "sink", "std"] }
+hyper = "0.14.18"
+log = "0.4.17"
+#MUST match the version of protobuf-codegen-pure in protospace
+protobuf = "2.28.0"
 serde = "1.0.152"
 serde_json = "1.0.91"
+sha1 = "0.10.5"
+sha3 = "0.10.0"
+thiserror = "1.0.37"
 tokio = { version = "1.24.1", default-features = false, features = ["macros", "net", "io-util", "sync", "rt-multi-thread"] }
 tokio-tungstenite = "0.18.0"
 tungstenite = { version = "0.18.0", default-features = false }
-hyper = "0.14.18"
-uuid = { version = "1.2.2", features = ["serde", "v4"] }
 url = "2.3.1"
-sha3 = "0.10.0"
-sha1 = "0.10.5"
-base64 = "0.21.0"
-digest = "0.10.6"
+uuid = { version = "1.2.2", features = ["serde", "v4"] }

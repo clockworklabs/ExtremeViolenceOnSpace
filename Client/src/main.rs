@@ -21,9 +21,9 @@ enum GameState {
 
 #[derive(AssetCollection, Resource)]
 struct ImageAssets {
-    #[asset(path = "Alien.png")]
+    #[asset(path = "images/Alien.png")]
     alien: Handle<Image>,
-    #[asset(path = "CowBoy.png")]
+    #[asset(path = "images/CowBoy.png")]
     cowboy: Handle<Image>,
 }
 
@@ -77,7 +77,7 @@ fn spawn_players(mut commands: Commands, asset_server: Res<AssetServer>) {
                 custom_size: Some(Vec2::new(size, size)),
                 ..default()
             },
-            texture: asset_server.load("images/CowBoy.png0001.png"),
+            texture: asset_server.load("images/CowBoy.png"),
             ..default()
         })
         .insert(Player {
@@ -96,7 +96,7 @@ fn spawn_players(mut commands: Commands, asset_server: Res<AssetServer>) {
                 custom_size: Some(Vec2::new(size, size)),
                 ..default()
             },
-            texture: asset_server.load("images/Alien.png0001.png"),
+            texture: asset_server.load("images/Alien.png"),
             ..default()
         })
         .insert(Player {
@@ -209,31 +209,27 @@ fn wait_for_players(
 ) {
     let socket = socket.as_mut();
 
-    // // If there is no socket we've already started the game
-    // if socket.is_none() {
-    //     return;
-    // }
-    //
-    // // Check for new connections
-    // socket.as_mut().unwrap().accept_new_connections();
-    // let players = socket.as_ref().unwrap().players();
-    //
-    // let num_players = 2;
-    // if players.len() < num_players {
-    //     return; // wait for more players
-    // }
+    // Check for new connections
+    let clients = socket.pub_sub.state_lock();
+
+    let num_players = 2;
+    if clients.clients.len() < num_players {
+        return; // wait for more players
+    }
 
     info!("All peers have joined, going in-game");
     // create a GGRS P2P session
     let mut session_builder = ggrs::SessionBuilder::<GgrsConfig>::new()
-        .with_num_players(2)
+        .with_num_players(num_players)
         .with_input_delay(2);
 
-    for (player_handle, player) in socket.clients.lock().unwrap().iter() {
+    for (player_handle, player) in clients.clients.iter().take(num_players) {
+        let player_handle = player_handle.identity - 1;
+        dbg!(player_handle);
         session_builder = session_builder
             .add_player(
                 PlayerType::Remote(player_handle.to_string()),
-                *player_handle as usize,
+                player_handle as usize,
             )
             .expect("failed to add player");
     }
@@ -282,8 +278,6 @@ fn camera_follow(
 const TIMESTEP_5_PER_SECOND: f64 = 30.0 / 60.0;
 
 fn main() {
-    //env_logger::init();
-
     let mut app = App::new();
 
     // GGRSPlugin::<GgrsConfig>::new()

@@ -1,6 +1,8 @@
 use std::collections::HashMap;
+use std::hash::Hash;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::sync::broadcast;
+use tokio::sync::broadcast::Receiver;
 
 /// The pub-sub channel is created with a capacity of `MAX_PUB_SUB_CONNECTIONS`.
 ///
@@ -17,42 +19,46 @@ use tokio::sync::broadcast;
 const MAX_PUB_SUB_CONNECTIONS: usize = 1024;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub(crate) struct Channel {
-    table_id: u32,
-    col_id: Option<u32>,
+pub struct Channel {
+    pub identity: u32,
 }
 
 impl Channel {
-    pub fn new(table_id: u32, col_id: Option<u32>) -> Self {
-        Self { table_id, col_id }
+    pub fn new(identity: u32) -> Self {
+        Self { identity }
     }
 }
 
 /// Manage the pub-sub connections
 #[derive(Debug, Clone)]
-pub(crate) struct PubSubDb {
+pub struct PubSubDb {
     // Using std Mutex instead of tokio because here we are not doing async
     state: Arc<Mutex<State>>,
 }
 
 impl PubSubDb {
     /// Create a new, empty, [PubSubDb] instance.
-    pub(crate) fn new() -> PubSubDb {
+    pub fn new() -> PubSubDb {
         let state = Arc::new(Mutex::new(State {
             pub_sub: HashMap::new(),
+            clients: HashMap::new(),
         }));
 
         PubSubDb { state }
     }
 
-    fn state_lock(&self) -> MutexGuard<'_, State> {
+    pub fn state_lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap()
+    }
+
+    pub fn len(&self) -> usize {
+        self.state_lock().pub_sub.len()
     }
 
     /// Returns a `Receiver` for the requested channel.
     ///
     /// The returned `Receiver` is used to receive values broadcast by [Self::publish].
-    pub(crate) fn subscribe(&self, channel: Channel) -> broadcast::Receiver<Msg<String>> {
+    pub fn subscribe(&self, channel: Channel) -> Receiver<Msg<String>> {
         use std::collections::hash_map::Entry;
 
         let mut state = self.state_lock();
@@ -60,20 +66,40 @@ impl PubSubDb {
         // If there is no entry for the requested channel, then create a new
         // broadcast channel and associate it with the key. If one already
         // exists, return an associated receiver.
-        match state.pub_sub.entry(channel) {
+        let rec = match state.pub_sub.entry(channel) {
             Entry::Occupied(e) => e.get().subscribe(),
             Entry::Vacant(e) => {
                 let (tx, rx) = broadcast::channel(MAX_PUB_SUB_CONNECTIONS);
                 e.insert(tx);
                 rx
             }
-        }
+        };
+
+        state.clients.insert(channel, rec);
+        state.clients[&channel].resubscribe()
+        // state.clients[&channel] = rec;
+        // &state.clients[&channel]
+
+        // state
+        //     .clients
+        //     .entry(channel)
+        //     .and_modify(|counter| *counter = rec)
+        //     .or_insert(rec);
+        // &state.clients[&channel]
+        //
+        // match state.clients.entry(channel) {
+        //     Entry::Occupied(e) => e.get(),
+        //     Entry::Vacant(e) => {
+        //         e.insert(rec);
+        //         &rec
+        //     }
+        // }
     }
 
     /// Publish a message to the channel.
     ///
     /// Returns the number of subscribers already listening on it.
-    pub(crate) fn publish(&self, channel: Channel, msg: Msg<String>) -> usize {
+    pub fn publish(&self, channel: Channel, msg: Msg<String>) -> usize {
         let state = self.state_lock();
 
         // The number of subscribers is returned on successful send.
@@ -104,8 +130,9 @@ impl<T> Msg<T> {
 }
 
 #[derive(Debug)]
-struct State {
+pub struct State {
     pub_sub: HashMap<Channel, broadcast::Sender<Msg<String>>>,
+    pub clients: HashMap<Channel, broadcast::Receiver<Msg<String>>>,
 }
 
 #[cfg(test)]
@@ -119,8 +146,8 @@ mod tests {
         let server = PubSubDb::new();
 
         let client = server.clone();
-        let ch1 = Channel::new(0, None);
-        let ch2 = Channel::new(1, None);
+        let ch1 = Channel::new(0);
+        let ch2 = Channel::new(1);
 
         let mut ret = client.subscribe(ch1);
 
