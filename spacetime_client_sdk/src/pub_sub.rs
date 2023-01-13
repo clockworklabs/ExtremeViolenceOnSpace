@@ -18,14 +18,18 @@ use tokio::sync::broadcast::Receiver;
 /// This prevents slow consumers from blocking the entire system.
 const MAX_PUB_SUB_CONNECTIONS: usize = 1024;
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Channel {
     pub identity: u32,
+    pub address: String,
 }
 
 impl Channel {
-    pub fn new(identity: u32) -> Self {
-        Self { identity }
+    pub fn new(identity: u32, address: &str) -> Self {
+        Self {
+            identity,
+            address: address.to_string(),
+        }
     }
 }
 
@@ -66,7 +70,7 @@ impl PubSubDb {
         // If there is no entry for the requested channel, then create a new
         // broadcast channel and associate it with the key. If one already
         // exists, return an associated receiver.
-        let rec = match state.pub_sub.entry(channel) {
+        let rec = match state.pub_sub.entry(channel.clone()) {
             Entry::Occupied(e) => e.get().subscribe(),
             Entry::Vacant(e) => {
                 let (tx, rx) = broadcast::channel(MAX_PUB_SUB_CONNECTIONS);
@@ -75,7 +79,7 @@ impl PubSubDb {
             }
         };
 
-        state.clients.insert(channel, rec);
+        state.clients.insert(channel.clone(), rec);
         state.clients[&channel].resubscribe()
         // state.clients[&channel] = rec;
         // &state.clients[&channel]
@@ -96,6 +100,19 @@ impl PubSubDb {
         // }
     }
 
+    /// Publish a message to ALL channels.
+    ///
+    /// Returns the number of subscribers already listening on it.
+    pub fn publish_all(&self, msg: Msg<String>) -> usize {
+        let state = self.state_lock();
+        let mut total = 0;
+        for ch in state.clients.keys() {
+            total += self.publish(ch.clone(), msg.clone())
+        }
+
+        total
+    }
+
     /// Publish a message to the channel.
     ///
     /// Returns the number of subscribers already listening on it.
@@ -110,6 +127,12 @@ impl PubSubDb {
             .get(&channel)
             .map(|tx| tx.send(msg).unwrap_or(0))
             .unwrap_or(0)
+    }
+
+    pub fn listen(&self, channel: Channel) -> Receiver<Msg<String>> {
+        let state = self.state_lock();
+
+        state.clients[&channel].resubscribe()
     }
 }
 

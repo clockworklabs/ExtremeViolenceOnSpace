@@ -24,7 +24,7 @@ use spacetime_client_sdk::pub_sub::PubSubDb;
 use spacetime_client_sdk::ws::tokio_setup;
 use std::str::FromStr;
 
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 pub(crate) struct ClientMSG {
     pub(crate) pub_sub: PubSubDb,
     pub(crate) client_to_game_receiver: CBReceiver<String>,
@@ -33,6 +33,7 @@ pub(crate) struct ClientMSG {
 pub(crate) fn setup_net(mut commands: Commands) {
     println!("Bevy Setup System");
     let room_url = "ws://127.0.0.1:3000/database/subscribe?name_or_address=extremeviolenceonspace";
+    let room_url = "ws://127.0.0.1:3000";
 
     //Create the client to game channel, note the sender will be cloned by each connected client
     let (client_to_game_sender, client_to_game_receiver) = unbounded::<String>();
@@ -67,7 +68,10 @@ pub(crate) fn message_system(client: Res<ClientMSG>) {
     // }
 
     //Attempts to receive a message from the channel without blocking.
-    if let Ok(msg) = client.client_to_game_receiver.try_recv() {
+    let state = client.pub_sub.state_lock();
+    let chan = state.clients.keys().next().unwrap();
+
+    if let Ok(msg) = client.pub_sub.listen(chan.clone()).try_recv() {
         println!("{:?}", msg);
     }
 }

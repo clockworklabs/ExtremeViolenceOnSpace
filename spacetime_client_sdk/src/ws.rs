@@ -85,13 +85,11 @@ pub async fn tokio_setup(
     pub_sub: PubSubDb,
     client_to_game_sender: CBSender<String>,
 ) -> Result<(), ClientError> {
-    // let url = BuildConnection::new(endpoint.as_str().parse::<Uri>().unwrap());
-    // let request = build_req(url).body(()).expect("Failed to build request");
-    //
-    // println!("Listening on: {}", endpoint);
-    //
-
-    let addr = "127.0.0.1:9002";
+    let url = endpoint.parse::<Uri>()?;
+    let addr = url
+        .authority()
+        .expect("Invalid URL: Need host + port")
+        .to_string();
     let listener = TcpListener::bind(&addr).await?;
     println!("Listening on: {}", addr);
 
@@ -122,7 +120,7 @@ async fn accept_connection(
     if let Err(e) = handle_connection(peer, stream, pub_sub, client_to_game_sender).await {
         match e {
             Error::ConnectionClosed | Error::Protocol(_) | Error::Utf8 => (),
-            err => println!("Error processing connection: {}", err),
+            err => eprintln!("Error processing connection: {}", err),
         }
     }
 }
@@ -134,6 +132,7 @@ async fn handle_connection(
     client_to_game_sender: CBSender<String>,
 ) -> Result<()> {
     println!("New WebSocket connection: {}", peer);
+
     let ws_stream = accept_async(stream).await?;
 
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
@@ -145,7 +144,7 @@ async fn handle_connection(
     let num_clients = pub_sub.len() as u32;
 
     //Store the incremented client id and the game to client sender in the clients hashmap
-    pub_sub.subscribe(Channel::new(num_clients + 1));
+    pub_sub.subscribe(Channel::new(num_clients + 1, &peer.to_string()));
 
     //This loop uses the tokio select! macro to receive messages from either the websocket receiver
     //or the game to client receiver

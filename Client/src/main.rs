@@ -10,7 +10,9 @@ use bevy::math::Vec3Swizzles;
 use bevy::prelude::*;
 use bevy_asset_loader::prelude::*;
 use bevy_ggrs::*;
+use crossbeam_channel::Receiver as CBReceiver;
 use ggrs::{Message, NonBlockingSocket, PlayerType};
+use spacetime_client_sdk::pub_sub::Channel;
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
 enum GameState {
@@ -192,12 +194,15 @@ fn setup(mut commands: Commands) {
     setup_net(commands)
 }
 
-struct MsgRec {}
+struct MsgRec {
+    socket: ClientMSG,
+}
 
 impl NonBlockingSocket<String> for MsgRec {
     fn send_to(&mut self, msg: &Message, addr: &String) {}
 
     fn receive_all_messages(&mut self) -> Vec<(String, Message)> {
+        //self.socket.iter().map(|msg| )
         vec![]
     }
 }
@@ -213,18 +218,27 @@ fn wait_for_players(
     let clients = socket.pub_sub.state_lock();
 
     let num_players = 2;
-    if clients.clients.len() < num_players {
-        return; // wait for more players
+
+    match clients.clients.len() {
+        0 => {
+            info!("Join for Player1");
+            //socket.pub_sub.subscribe(Channel::new(1, ""));
+            info!("Waiting for Player2");
+            return;
+        }
+        1 => {}
+        _ => panic!("This is a 2 player-only game!"),
     }
 
-    info!("All peers have joined, going in-game");
     // create a GGRS P2P session
     let mut session_builder = ggrs::SessionBuilder::<GgrsConfig>::new()
         .with_num_players(num_players)
-        .with_input_delay(2);
+        .with_input_delay(2)
+        .add_player(PlayerType::Remote(0.to_string()), 0)
+        .expect("failed to add player");
 
-    for (player_handle, player) in clients.clients.iter().take(num_players) {
-        let player_handle = player_handle.identity - 1;
+    for (player_handle, _player_rec) in clients.clients.iter().next() {
+        let player_handle = player_handle.identity;
         dbg!(player_handle);
         session_builder = session_builder
             .add_player(
@@ -235,16 +249,16 @@ fn wait_for_players(
     }
 
     // move the socket out of the resource (required because GGRS takes ownership of it)
-    let socket = socket.client_to_game_receiver.clone();
+    let socket = socket.clone();
 
     // start the GGRS session
     let session = session_builder
-        .start_p2p_session(MsgRec {})
+        .start_p2p_session(MsgRec { socket })
         //.start_synctest_session()
         .expect("failed to start session");
 
     commands.insert_resource(Session::P2PSession(session));
-
+    info!("All peers have joined, going in-game");
     state.set(GameState::InGame).unwrap();
 }
 
@@ -280,14 +294,14 @@ const TIMESTEP_5_PER_SECOND: f64 = 30.0 / 60.0;
 fn main() {
     let mut app = App::new();
 
-    // GGRSPlugin::<GgrsConfig>::new()
-    //     .with_input_system(input)
-    //     .with_rollback_schedule(Schedule::default().with_stage(
-    //         "ROLLBACK_STAGE",
-    //         SystemStage::single_threaded().with_system(move_players),
-    //     ))
-    //     .register_rollback_component::<Transform>()
-    //     .build(&mut app);
+    GGRSPlugin::<GgrsConfig>::new()
+        .with_input_system(input)
+        .with_rollback_schedule(Schedule::default().with_stage(
+            "ROLLBACK_STAGE",
+            SystemStage::single_threaded().with_system(move_players),
+        ))
+        .register_rollback_component::<Transform>()
+        .build(&mut app);
 
     app.add_state(GameState::AssetLoading)
         .add_loading_state(
