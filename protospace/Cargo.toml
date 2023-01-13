@@ -1,0 +1,9 @@
+[package]
+name = "protospace"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+[build-dependencies]
+protobuf-codegen-pure = "2.28.0"

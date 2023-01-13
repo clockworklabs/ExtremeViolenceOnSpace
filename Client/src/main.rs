@@ -221,9 +221,9 @@ fn wait_for_players(
 
     match clients.clients.len() {
         0 => {
-            info!("Join for Player1");
+            // info!("Join for Player1");
             //socket.pub_sub.subscribe(Channel::new(1, ""));
-            info!("Waiting for Player2");
+            //info!("Waiting for Player2");
             return;
         }
         1 => {}
