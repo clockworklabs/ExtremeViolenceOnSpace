@@ -2,12 +2,13 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::errors::ClientError;
+use crate::messages::{process_msg, SpaceDbMsg};
 use crate::ws::{build_req, BuildConnection};
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
 use futures::{join, SinkExt, StreamExt};
 use log::{error, info, warn};
 use tokio::{runtime::Runtime, task::JoinHandle};
-use tokio_tungstenite::{connect_async, WebSocketStream};
+use tokio_tungstenite::connect_async;
 use tungstenite::http::Uri;
 use tungstenite::Message;
 use uuid::Uuid;
@@ -27,11 +28,6 @@ impl ConnectionHandle {
     pub fn id(&self) -> Uuid {
         self.uuid
     }
-}
-
-#[derive(Debug)]
-pub enum SpaceDbMsg {
-    Json(String),
 }
 
 #[derive(Debug)]
@@ -94,39 +90,8 @@ impl Client {
 
             let read_handle = async move {
                 read.for_each(|msg| async {
-                    match msg {
-                        Err(e) => {
-                            error!("failed to receive message: {:?}", e);
-                        }
-                        Ok(msg) => {
-                            let handle = ConnectionHandle {
-                                uuid: uuid::Uuid::nil(),
-                            };
-                            dbg!(&msg);
-                            match msg {
-                                Message::Text(txt) => ev_tx
-                                    .send(NetworkEvent::Message(handle, SpaceDbMsg::Json(txt)))
-                                    .expect("failed to forward network message"),
-                                Message::Binary(bin) => ev_tx
-                                    .send(NetworkEvent::Message(
-                                        handle,
-                                        SpaceDbMsg::Json(format!("{bin:?}")),
-                                    ))
-                                    .expect("failed to forward network message"),
-                                Message::Ping(_) => {
-                                    info!("Ping");
-                                }
-                                Message::Pong(_) => {
-                                    info!("Pong");
-                                }
-                                Message::Close(_) => {
-                                    warn!("Close");
-                                }
-                                Message::Frame(_) => {
-                                    warn!("Frame");
-                                }
-                            }
-                        }
+                    if let Some(msg) = process_msg(msg) {
+                        ev_tx.send(msg).expect("failed to forward network message");
                     }
                 })
                 .await;

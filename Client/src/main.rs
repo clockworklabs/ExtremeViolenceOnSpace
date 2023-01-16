@@ -3,7 +3,9 @@ mod bevy_ws;
 mod components;
 mod input;
 
-use crate::bevy_ws::{listen_for_events, WebSocketClient, WsClient};
+use crate::bevy_ws::{
+    consume_messages, handle_network_events, listen_for_events, setup_net, WsClient,
+};
 use crate::components::*;
 use crate::input::*;
 use bevy::app::ScheduleRunnerSettings;
@@ -13,6 +15,7 @@ use bevy_asset_loader::prelude::*;
 use bevy_ggrs::*;
 use ggrs::{Message, NonBlockingSocket, PlayerType};
 use spacetime_client_sdk::web_socket::NetworkEvent;
+use std::collections::HashMap;
 use std::time::Duration;
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
@@ -32,7 +35,7 @@ struct ImageAssets {
 
 const MAP_SIZE: i32 = 41;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 enum PlayerId {
     One,
     Two,
@@ -145,6 +148,8 @@ fn setup(mut commands: Commands) {
     let camera_bundle = Camera2dBundle::default();
     //camera_bundle.projection.scaling_mode = ScalingMode::FixedVertical(10.);
     commands.spawn(camera_bundle);
+
+    setup_net(commands);
 }
 
 struct MsgRec {
@@ -168,17 +173,20 @@ fn wait_for_players(
     if !socket.client.is_running() {
         return;
     }
-    let mut clients = Vec::with_capacity(2);
+    let mut clients = HashMap::with_capacity(2);
+    if let Some(id) = &socket.client_id {
+        clients.insert(PlayerId::Two, id.clone());
+    }
 
     for msg in socket.client.try_recv() {
         match msg {
             NetworkEvent::Connected(client_id) => {
                 socket.client_id = Some(client_id.clone());
-                clients.push((PlayerId::One, client_id));
+                clients.insert(PlayerId::One, client_id);
             }
             NetworkEvent::Message(ref client_id, _) => {
                 if socket.client_id.as_ref() != Some(client_id) {
-                    clients.push((PlayerId::Two, client_id.clone()));
+                    clients.insert(PlayerId::Two, client_id.clone());
                 }
             }
             NetworkEvent::Disconnected(_) => {
@@ -189,7 +197,6 @@ fn wait_for_players(
         };
     }
     let num_players = 2;
-
     match clients.len() {
         0 => {
             info!("Waiting for Player1");
@@ -200,7 +207,7 @@ fn wait_for_players(
             return;
         }
         2 => {
-            info!("Players ready");
+            info!("Players ready!");
         }
         _ => panic!("This is a 2 player-only game!"),
     }
@@ -208,9 +215,7 @@ fn wait_for_players(
     // create a GGRS P2P session
     let mut session_builder = ggrs::SessionBuilder::<GgrsConfig>::new()
         .with_num_players(num_players)
-        .with_input_delay(2)
-        .add_player(PlayerType::Remote(0.to_string()), 0)
-        .expect("failed to add player");
+        .with_input_delay(2);
 
     for (player_handle, player_rec) in clients {
         dbg!(player_handle);
@@ -228,7 +233,6 @@ fn wait_for_players(
     // start the GGRS session
     let session = session_builder
         .start_p2p_session(MsgRec { socket })
-        //.start_synctest_session()
         .expect("failed to start session");
 
     commands.insert_resource(Session::P2PSession(session));
@@ -284,9 +288,9 @@ fn main() {
                 .continue_to_state(GameState::Matchmaking),
         )
         .insert_resource(ClearColor(Color::rgb(0.53, 0.53, 0.53)))
-        .insert_resource(ScheduleRunnerSettings::run_loop(Duration::from_secs_f64(
-            TIMESTEP_5_PER_SECOND,
-        )))
+        // .insert_resource(ScheduleRunnerSettings::run_loop(Duration::from_secs_f64(
+        //     TIMESTEP_5_PER_SECOND,
+        // )))
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             window: WindowDescriptor {
                 title: "SpacetimeDB Game".into(),
@@ -295,32 +299,17 @@ fn main() {
             },
             ..default()
         }))
-        .add_plugin(WebSocketClient::default())
+        //.add_plugin(WebSocketClient::default())
+        .add_event::<NetworkEvent>()
         .add_system_set(SystemSet::on_enter(GameState::Matchmaking).with_system(setup))
+        // .add_system_set(
+        //     SystemSet::on_update(GameState::Matchmaking).with_system(handle_network_events),
+        // )
         .add_system_set(SystemSet::on_update(GameState::Matchmaking).with_system(wait_for_players))
-        .add_system_set(SystemSet::on_enter(GameState::InGame).with_system(listen_for_events))
+        // .add_system_set(SystemSet::on_update(GameState::Matchmaking).with_system(consume_messages))
+        // .add_system_set(SystemSet::on_update(GameState::Matchmaking).with_system(listen_for_events))
         .add_system_set(SystemSet::on_enter(GameState::InGame).with_system(spawn_players))
         .add_system_set(SystemSet::on_update(GameState::InGame).with_system(camera_follow))
         .add_system(bevy::window::close_on_esc)
         .run();
-
-    // app.add_plugins(DefaultPlugins.set(WindowPlugin {
-    //     window: WindowDescriptor {
-    //         title: "SpacetimeDB Game".into(),
-    //         fit_canvas_to_parent: true,
-    //         ..default()
-    //     },
-    //     ..default()
-    // }))
-    // .insert_resource(ScheduleRunnerSettings::run_loop(Duration::from_secs_f64(
-    //     TIMESTEP_5_PER_SECOND,
-    // )))
-    // .insert_resource(ClearColor(Color::rgb(0.0, 0.0, 0.20)))
-    // .add_startup_system(setup)
-    // .add_startup_system(spawn_players)
-    // // .add_system(wait_for_players)
-    // .add_system(message_system)
-    // //.add_startup_system(start_matchbox_socket)
-    // .add_system(bevy::window::close_on_esc)
-    // .run();
 }

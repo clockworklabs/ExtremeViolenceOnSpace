@@ -7,8 +7,6 @@ use tungstenite::http::header::{
 };
 use tungstenite::http::{Request, Uri};
 
-use crate::client_api::{Message as ApiMessage, Message_oneof_type};
-
 const PROTO_WEBSOCKET: &str = "websocket";
 
 #[derive(PartialEq, Eq, Clone, Copy, Hash, Debug)]
@@ -65,50 +63,3 @@ pub fn build_req(con: BuildConnection) -> Builder {
     }
     .uri(con.url)
 }
-//
-// fn process_read(
-//     pub_sub: &PubSubDb,
-//     msg: Option<Result<tungstenite::Message, tungstenite::Error>>,
-// ) -> bool {
-//     println!("Received: {:?}", &msg);
-//     match msg {
-//         Some(Ok(msg)) => match msg {
-//             WsMessage::Text(txt) => {
-//                 //pub_sub.publish_all(Msg::Op(txt));
-//                 true
-//             }
-//             WsMessage::Binary(bin) => {
-//                 let msg = ApiMessage::parse_from_bytes(&bin).unwrap();
-//                 println!("Parsed: {:?}", &msg);
-//
-//                 if let Some(msg) = msg.field_type {
-//                     let state = pub_sub.state_lock();
-//
-//                     match msg {
-//                         Message_oneof_type::functionCall(_) => {}
-//                         Message_oneof_type::subscriptionUpdate(_) => {}
-//                         Message_oneof_type::event(_) => {}
-//                         Message_oneof_type::transactionUpdate(_) => {}
-//                         Message_oneof_type::identityToken(token) => {
-//                             state
-//                                 .client_to_game_sender
-//                                 .send(Msg::Op(token.get_token().to_string()))
-//                                 .unwrap();
-//                         }
-//                     }
-//                 }
-//                 true
-//             }
-//             WsMessage::Ping(_) | WsMessage::Pong(_) | WsMessage::Frame(_) => true,
-//             WsMessage::Close(_) => false,
-//         },
-//         Some(Err(err)) => {
-//             eprintln!("{}", err);
-//             false
-//         }
-//         _ => {
-//             println!("Gone");
-//             false
-//         }
-//     }
-// }
