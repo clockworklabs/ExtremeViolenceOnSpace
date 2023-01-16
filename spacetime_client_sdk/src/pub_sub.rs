@@ -2,8 +2,6 @@ use crossbeam_channel::unbounded;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::{Arc, Mutex, MutexGuard};
-use tokio::sync::broadcast;
-use tokio::sync::broadcast::Receiver;
 
 /// The pub-sub channel is created with a capacity of `MAX_PUB_SUB_CONNECTIONS`.
 ///

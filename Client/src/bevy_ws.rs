@@ -1,71 +1,75 @@
-// Configure clippy for Bevy usage
-#![allow(clippy::type_complexity)]
-#![allow(clippy::too_many_arguments)]
-#![allow(clippy::too_many_lines)]
-#![allow(clippy::must_use_candidate)]
-#![allow(clippy::needless_pass_by_value)]
-#![allow(clippy::enum_glob_use)]
-
-use bevy::{
-    app::ScheduleRunnerSettings, core::CorePlugin, prelude::*, tasks::IoTaskPool, utils::Duration,
-};
-use crossbeam_channel::{unbounded, Receiver as CBReceiver, Sender as CBSender};
-use std::os::macos::raw::stat;
-// use tokio::sync::mpsc::Sender;
-//
-// use futures_util::{SinkExt, StreamExt};
-// use std::net::SocketAddr;
-// use tokio::net::{TcpListener, TcpStream};
-// use tokio_tungstenite::tungstenite::{Message, Result};
-// use tokio_tungstenite::{accept_async, tungstenite::Error};
-
-use async_compat::Compat;
-
-use spacetime_client_sdk::pub_sub::{Msg, PubSubDb};
-use spacetime_client_sdk::ws::tokio_setup;
-use std::str::FromStr;
+use bevy::prelude::*;
+use spacetime_client_sdk::web_socket::{Client, ConnectionHandle, NetworkEvent};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[derive(Resource, Clone)]
-pub(crate) struct ClientMSG {
-    pub(crate) pub_sub: PubSubDb,
-    pub(crate) client_to_game_receiver: CBReceiver<String>,
+pub(crate) struct WsClient {
+    pub(crate) client: Arc<Client>,
+    pub(crate) client_id: Option<ConnectionHandle>,
 }
 
-pub(crate) fn setup_net(mut commands: Commands) {
-    println!("Bevy Setup System");
-    let room_url = "ws://127.0.0.1:3000/database/subscribe?name_or_address=extremeviolenceonspace";
-
-    //Create the client to game channel, note the sender will be cloned by each connected client
-    let (client_to_game_sender, client_to_game_receiver) = unbounded::<String>();
-
-    let pub_sub = PubSubDb::new();
-
-    //Spawn the tokio runtime setup using a Compat with the clients and client to game channel
-    IoTaskPool::get()
-        .spawn(Compat::new(tokio_setup(room_url, pub_sub.clone())))
-        .detach();
-    //Insert the clients and client to game channel into the Bevy resources
-    let client = ClientMSG {
-        pub_sub,
-        client_to_game_receiver,
-    };
-    commands.insert_resource(client);
+#[derive(Resource)]
+pub(crate) struct WsMsg {
+    pub(crate) ev: Vec<NetworkEvent>,
 }
 
-pub(crate) fn message_system(client: Res<ClientMSG>) {
-    let state = client.pub_sub.state_lock();
-    //Broadcast a message to each connected client on each Bevy System iteration.
-    for (_id, client) in state.clients.iter() {
-        println!("{:?}", client);
-        client
-            .try_send(Msg::Op("Broadcast message from Bevy System".to_string()))
-            .expect("Could not send message");
+impl WsMsg {
+    pub fn new() -> Self {
+        Self { ev: Vec::new() }
     }
+}
 
-    //Attempts to receive a message from the channel without blocking.
-    //let chan = state.clients.keys().next().unwrap();
+#[derive(Default, Debug)]
+pub struct WebSocketClient {}
 
-    if let Ok(msg) = state.client_to_game_receiver.try_recv() {
-        println!("{:?}", msg);
+impl Plugin for WebSocketClient {
+    fn build(&self, app: &mut App) {
+        let mut client = Client::new().expect("Fail to build ws client");
+        client
+            .connect(
+                "ws://127.0.0.1:3000/database/subscribe?name_or_address=extremeviolenceonspace"
+                    .into(),
+            )
+            .unwrap();
+        //        let router = Arc::new(Mutex::new(GenericParser::new()));
+        let network_events = WsMsg::new();
+        //         app.add_startup_system_to_stage(StartupStage::PreStartup, create_server)
+        //         //    .add_system_to_stage(CoreStage::PreUpdate, update_sync_server)
+
+        app.insert_resource(WsClient {
+            client: Arc::new(client),
+            client_id: None,
+        })
+        // .insert_resource(router)
+        .insert_resource(network_events)
+        .add_event::<NetworkEvent>()
+        .add_stage_before(CoreStage::First, "network", SystemStage::single_threaded())
+        .add_system_to_stage("network", consume_messages)
+        .add_system_to_stage("network", handle_network_events);
+    }
+}
+
+fn consume_messages(ws: Res<WsClient>, mut network_events: ResMut<WsMsg>) {
+    if !ws.client.is_running() {
+        return;
+    }
+    while let Some(ev) = ws.client.try_recv() {
+        network_events.ev.push(ev);
+    }
+}
+
+pub(crate) fn handle_network_events(
+    mut events: ResMut<WsMsg>,
+    mut sink: EventWriter<NetworkEvent>,
+) {
+    for ev in events.ev.drain(..) {
+        sink.send(ev);
+    }
+}
+
+pub(crate) fn listen_for_events(mut evs: EventReader<NetworkEvent>) {
+    for ev in evs.iter() {
+        info!("received NetworkEvent : {:?}", ev);
     }
 }

@@ -1,18 +1,18 @@
+use std::str::FromStr;
 use std::sync::Arc;
 
+use crate::errors::ClientError;
 use crate::ws::{build_req, BuildConnection};
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
-use digest::core_api::CoreWrapper;
 use futures::{join, SinkExt, StreamExt};
-use log::{error, warn};
-use sha1::Sha1Core;
+use log::{error, info, warn};
 use tokio::{runtime::Runtime, task::JoinHandle};
-use tokio_tungstenite::connect_async;
+use tokio_tungstenite::{connect_async, WebSocketStream};
 use tungstenite::http::Uri;
-use url::Url;
+use tungstenite::Message;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct ConnectionHandle {
     pub uuid: Uuid,
 }
@@ -29,17 +29,18 @@ impl ConnectionHandle {
     }
 }
 
-pub enum NetworkError {}
+#[derive(Debug)]
+pub enum SpaceDbMsg {
+    Json(String),
+}
 
 #[derive(Debug)]
 pub enum NetworkEvent {
     Connected(ConnectionHandle),
     Disconnected(ConnectionHandle),
-    Message(ConnectionHandle, Vec<u8>),
-    Error(Option<ConnectionHandle>, String),
+    Message(ConnectionHandle, SpaceDbMsg),
+    Error(Option<ConnectionHandle>, ClientError),
 }
-
-pub type Sha1 = CoreWrapper<Sha1Core>;
 
 pub struct Client {
     rt: Arc<Runtime>,
@@ -48,66 +49,83 @@ pub struct Client {
     tx: Option<Arc<Sender<tungstenite::Message>>>,
 }
 
-impl Default for Client {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Client {
-    pub fn is_running(&self) -> bool {
-        self.handle.is_some() && self.rx.is_some() && self.tx.is_some()
-    }
-
-    pub fn new() -> Client {
-        Client {
+    pub fn new() -> Result<Self, ClientError> {
+        Ok(Client {
             rt: Arc::new(
                 tokio::runtime::Builder::new_multi_thread()
                     .enable_all()
-                    .build()
-                    .expect("Could not build tokio runtime"),
+                    .build()?,
             ),
             handle: None,
             rx: None,
             tx: None,
-        }
+        })
     }
 
-    pub fn connect(&mut self, endpoint: Url) {
-        let url = BuildConnection::new(endpoint.as_str().parse::<Uri>().unwrap());
-        let request = build_req(url).body(()).expect("Failed to build request");
+    pub fn is_running(&self) -> bool {
+        self.handle.is_some() && self.rx.is_some() && self.tx.is_some()
+    }
 
+    pub fn connect(&mut self, endpoint: String) -> Result<(), ClientError> {
+        info!("Connecting to: {}...", endpoint);
+        let url = Uri::from_str(&endpoint)?;
+        let url = BuildConnection::new(url);
+        let request = build_req(url).body(())?;
         let (ev_tx, ev_rx) = unbounded();
         let (from_handler_tx, from_handler_rx) = unbounded();
 
         let event_loop = async move {
-            let (ws_stream, _) = connect_async(request).await.expect("Failed to connect");
-            let (mut write, read) = ws_stream.split();
+            let (ws_stream, _) = match connect_async(request).await {
+                Ok(x) => x,
+                Err(err) => {
+                    ev_tx
+                        .send(NetworkEvent::Error(None, ClientError::Tungstenite(err)))
+                        .expect("failed to send error network event");
+                    return;
+                }
+            };
+            info!("Connected to: {} DONE", endpoint);
 
-            dbg!("connected");
+            let (mut write, read) = ws_stream.split();
             ev_tx
-                .send(NetworkEvent::Connected(ConnectionHandle {
-                    uuid: uuid::Uuid::nil(),
-                }))
+                .send(NetworkEvent::Connected(ConnectionHandle::new()))
                 .expect("failed to send network event");
+
             let read_handle = async move {
                 read.for_each(|msg| async {
                     match msg {
                         Err(e) => {
                             error!("failed to receive message: {:?}", e);
                         }
-                        Ok(tungstenite::Message::Binary(bts)) => {
-                            ev_tx
-                                .send(NetworkEvent::Message(
-                                    ConnectionHandle {
-                                        uuid: uuid::Uuid::nil(),
-                                    },
-                                    bts,
-                                ))
-                                .expect("failed to forward network message");
-                        }
-                        Ok(m) => {
-                            warn!("unsupported message: {:?}", m);
+                        Ok(msg) => {
+                            let handle = ConnectionHandle {
+                                uuid: uuid::Uuid::nil(),
+                            };
+                            dbg!(&msg);
+                            match msg {
+                                Message::Text(txt) => ev_tx
+                                    .send(NetworkEvent::Message(handle, SpaceDbMsg::Json(txt)))
+                                    .expect("failed to forward network message"),
+                                Message::Binary(bin) => ev_tx
+                                    .send(NetworkEvent::Message(
+                                        handle,
+                                        SpaceDbMsg::Json(format!("{bin:?}")),
+                                    ))
+                                    .expect("failed to forward network message"),
+                                Message::Ping(_) => {
+                                    info!("Ping");
+                                }
+                                Message::Pong(_) => {
+                                    info!("Pong");
+                                }
+                                Message::Close(_) => {
+                                    warn!("Close");
+                                }
+                                Message::Frame(_) => {
+                                    warn!("Frame");
+                                }
+                            }
                         }
                     }
                 })
@@ -117,6 +135,7 @@ impl Client {
             let write_handle = async move {
                 loop {
                     let req = from_handler_rx.try_recv();
+
                     match req {
                         Err(TryRecvError::Empty) => {
                             // TODO: REPLACE SPINLOCK !
@@ -126,6 +145,7 @@ impl Client {
                             warn!("failed to forward message to sink: {}", e);
                         }
                         Ok(ev) => {
+                            dbg!(&ev);
                             if let Err(e) = write.send(ev).await {
                                 warn!("failed to send message to server: {}", e);
                             }
@@ -138,6 +158,8 @@ impl Client {
         self.handle = Some(self.rt.spawn(event_loop));
         self.rx = Some(Arc::new(ev_rx));
         self.tx = Some(Arc::new(from_handler_tx));
+
+        Ok(())
     }
 
     pub fn try_recv(&self) -> Option<NetworkEvent> {
@@ -169,11 +191,9 @@ impl Client {
 
 #[cfg(test)]
 mod tests {
+    use tokio::time::{sleep, Duration};
+
     use super::*;
-    use log::info;
-    use std::str::FromStr;
-    use std::thread::sleep;
-    use std::time::Duration;
 
     #[test]
     fn test_connect() {
@@ -181,11 +201,19 @@ mod tests {
             "ws://127.0.0.1:3000/database/subscribe?name_or_address=extremeviolenceonspace";
         info!("connecting to spacetimedb server: {:?}", room_url);
 
-        let mut client = Client::new();
-        client.connect(Url::from_str(room_url).unwrap());
-
-        sleep(Duration::from_secs(1));
+        let mut client = Client::new().unwrap();
+        client.connect(room_url.into()).unwrap();
 
         dbg!("Connected");
+        dbg!(client.is_running());
+
+        client.send_raw_message(Message::Text("Hi".to_string()));
+
+        let _ = client
+            .rt
+            .block_on(async { sleep(Duration::from_millis(100)).await });
+        for msg in client.try_recv() {
+            dbg!(msg);
+        }
     }
 }

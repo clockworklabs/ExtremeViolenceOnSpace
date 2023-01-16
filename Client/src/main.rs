@@ -3,16 +3,17 @@ mod bevy_ws;
 mod components;
 mod input;
 
-use crate::bevy_ws::{message_system, setup_net, ClientMSG};
+use crate::bevy_ws::{listen_for_events, WebSocketClient, WsClient};
 use crate::components::*;
 use crate::input::*;
+use bevy::app::ScheduleRunnerSettings;
 use bevy::math::Vec3Swizzles;
 use bevy::prelude::*;
 use bevy_asset_loader::prelude::*;
 use bevy_ggrs::*;
-use crossbeam_channel::Receiver as CBReceiver;
 use ggrs::{Message, NonBlockingSocket, PlayerType};
-use spacetime_client_sdk::pub_sub::Channel;
+use spacetime_client_sdk::web_socket::NetworkEvent;
+use std::time::Duration;
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
 enum GameState {
@@ -31,7 +32,7 @@ struct ImageAssets {
 
 const MAP_SIZE: i32 = 41;
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum PlayerId {
     One,
     Two,
@@ -43,6 +44,10 @@ struct Player {
 }
 
 impl Player {
+    pub fn new(handle: PlayerId) -> Self {
+        Self { handle }
+    }
+
     pub fn as_idx(&self) -> usize {
         match self.handle {
             PlayerId::One => 0,
@@ -136,66 +141,14 @@ fn move_players(
     }
 }
 
-fn start_matchbox_socket(mut commands: Commands) {
-    // var url = new Uri($"ws://{host}/database/subscribe?name_or_address={nameOrAddress}");
-    //
-    // let room_url =
-    //     "ws://127.0.0.1:3000/database/subscribe?name_or_address=extreme_violence_spacetimedb";
-    // info!("connecting to spacetimedb server: {:?}", room_url);
-    //
-    // let mut client = Client::new();
-    // client.connect(Url::from_str(room_url).unwrap());
-
-    // let (socket, message_loop) = WebRtcSocket::new(room_url);
-    //
-    // The message loop needs to be awaited, or nothing will happen.
-    // We do this here using bevy's task system.
-    //IoTaskPool::get().spawn(client.send_message()).detach();
-    //
-    //commands.insert_resource(Some(client));
-    // commands.insert_resource(client);
-}
-//
-// pub struct QuinnetServerPlugin {}
-//
-// impl Default for QuinnetServerPlugin {
-//     fn default() -> Self {
-//         Self {}
-//     }
-// }
-//
-// fn create_server(mut commands: Commands, runtime: Res<Client>) {
-//     let room_url = "ws://127.0.0.1:3000/database/subscribe?name_or_address=";
-//     info!("connecting to spacetimedb server: {:?}", room_url);
-//
-//     let mut client = Client::new();
-//     client.connect(Url::from_str(room_url).unwrap());
-//
-//     commands.insert_resource(client);
-// }
-//
-// impl Plugin for QuinnetServerPlugin {
-//     fn build(&self, app: &mut App) {
-//         app.add_startup_system_to_stage(StartupStage::PreStartup, create_server)
-//         //    .add_system_to_stage(CoreStage::PreUpdate, update_sync_server)
-//         ;
-//
-//         if app.world.get_resource_mut::<Client>().is_none() {
-//             app.insert_resource(Client::new());
-//         }
-//     }
-// }
-
 fn setup(mut commands: Commands) {
     let camera_bundle = Camera2dBundle::default();
     //camera_bundle.projection.scaling_mode = ScalingMode::FixedVertical(10.);
     commands.spawn(camera_bundle);
-
-    setup_net(commands)
 }
 
 struct MsgRec {
-    socket: ClientMSG,
+    socket: WsClient,
 }
 
 impl NonBlockingSocket<String> for MsgRec {
@@ -209,24 +162,46 @@ impl NonBlockingSocket<String> for MsgRec {
 
 fn wait_for_players(
     mut commands: Commands,
-    mut socket: ResMut<ClientMSG>,
+    mut socket: ResMut<WsClient>,
     mut state: ResMut<State<GameState>>,
 ) {
-    let socket = socket.as_mut();
+    if !socket.client.is_running() {
+        return;
+    }
+    let mut clients = Vec::with_capacity(2);
 
-    // Check for new connections
-    let clients = socket.pub_sub.state_lock();
-
+    for msg in socket.client.try_recv() {
+        match msg {
+            NetworkEvent::Connected(client_id) => {
+                socket.client_id = Some(client_id.clone());
+                clients.push((PlayerId::One, client_id));
+            }
+            NetworkEvent::Message(ref client_id, _) => {
+                if socket.client_id.as_ref() != Some(client_id) {
+                    clients.push((PlayerId::Two, client_id.clone()));
+                }
+            }
+            NetworkEvent::Disconnected(_) => {
+                socket.client_id = None;
+                return;
+            }
+            NetworkEvent::Error(client_id, _) => return,
+        };
+    }
     let num_players = 2;
 
-    match clients.clients.len() {
+    match clients.len() {
         0 => {
-            // info!("Join for Player1");
-            //socket.pub_sub.subscribe(Channel::new(1, ""));
-            //info!("Waiting for Player2");
+            info!("Waiting for Player1");
             return;
         }
-        1 => {}
+        1 => {
+            info!("Waiting for Player2");
+            return;
+        }
+        2 => {
+            info!("Players ready");
+        }
         _ => panic!("This is a 2 player-only game!"),
     }
 
@@ -237,12 +212,11 @@ fn wait_for_players(
         .add_player(PlayerType::Remote(0.to_string()), 0)
         .expect("failed to add player");
 
-    for (player_handle, _player_rec) in clients.clients.iter().next() {
-        let player_handle = player_handle.identity;
+    for (player_handle, player_rec) in clients {
         dbg!(player_handle);
         session_builder = session_builder
             .add_player(
-                PlayerType::Remote(player_handle.to_string()),
+                PlayerType::Remote(player_rec.uuid.to_string()),
                 player_handle as usize,
             )
             .expect("failed to add player");
@@ -310,6 +284,9 @@ fn main() {
                 .continue_to_state(GameState::Matchmaking),
         )
         .insert_resource(ClearColor(Color::rgb(0.53, 0.53, 0.53)))
+        .insert_resource(ScheduleRunnerSettings::run_loop(Duration::from_secs_f64(
+            TIMESTEP_5_PER_SECOND,
+        )))
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             window: WindowDescriptor {
                 title: "SpacetimeDB Game".into(),
@@ -318,13 +295,10 @@ fn main() {
             },
             ..default()
         }))
-        .add_system_set(
-            SystemSet::on_enter(GameState::Matchmaking)
-                .with_system(start_matchbox_socket)
-                .with_system(setup),
-        )
+        .add_plugin(WebSocketClient::default())
+        .add_system_set(SystemSet::on_enter(GameState::Matchmaking).with_system(setup))
         .add_system_set(SystemSet::on_update(GameState::Matchmaking).with_system(wait_for_players))
-        .add_system_set(SystemSet::on_enter(GameState::InGame).with_system(message_system))
+        .add_system_set(SystemSet::on_enter(GameState::InGame).with_system(listen_for_events))
         .add_system_set(SystemSet::on_enter(GameState::InGame).with_system(spawn_players))
         .add_system_set(SystemSet::on_update(GameState::InGame).with_system(camera_follow))
         .add_system(bevy::window::close_on_esc)
