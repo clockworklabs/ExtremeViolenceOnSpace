@@ -6,7 +6,6 @@ edition = "2021"
 license = "MIT"
 
 [dependencies]
-spacetimedb = "0.3.1"
 spacetime_client_sdk = {path = "../spacetime_client_sdk"}
 
 # Remember to revert this before releasing your game!.

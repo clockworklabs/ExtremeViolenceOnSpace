@@ -1,12 +1,17 @@
 //! A simplified implementation of the classic game "Breakout".
 mod bevy_ws;
 mod components;
+mod database;
 mod input;
+
+use std::collections::HashMap;
+use std::time::Duration;
 
 use crate::bevy_ws::{
     consume_messages, handle_network_events, listen_for_events, setup_net, WsClient,
 };
 use crate::components::*;
+use crate::database::*;
 use crate::input::*;
 use bevy::app::ScheduleRunnerSettings;
 use bevy::math::Vec3Swizzles;
@@ -15,8 +20,6 @@ use bevy_asset_loader::prelude::*;
 use bevy_ggrs::*;
 use ggrs::{Message, NonBlockingSocket, PlayerType};
 use spacetime_client_sdk::web_socket::NetworkEvent;
-use std::collections::HashMap;
-use std::time::Duration;
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
 enum GameState {
@@ -34,30 +37,6 @@ struct ImageAssets {
 }
 
 const MAP_SIZE: i32 = 41;
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-enum PlayerId {
-    One,
-    Two,
-}
-
-#[derive(Component, PartialEq, Eq)]
-struct Player {
-    handle: PlayerId,
-}
-
-impl Player {
-    pub fn new(handle: PlayerId) -> Self {
-        Self { handle }
-    }
-
-    pub fn as_idx(&self) -> usize {
-        match self.handle {
-            PlayerId::One => 0,
-            PlayerId::Two => 1,
-        }
-    }
-}
 
 struct GgrsConfig;
 
@@ -182,9 +161,11 @@ fn wait_for_players(
         match msg {
             NetworkEvent::Connected(client_id) => {
                 socket.client_id = Some(client_id.clone());
+                create_new_player(&socket.client, PlayerId::One, &client_id);
                 clients.insert(PlayerId::One, client_id);
             }
-            NetworkEvent::Message(ref client_id, _) => {
+            NetworkEvent::Message(ref client_id, msg) => {
+                warn!("Get {msg:?}");
                 if socket.client_id.as_ref() != Some(client_id) {
                     clients.insert(PlayerId::Two, client_id.clone());
                 }
@@ -203,7 +184,7 @@ fn wait_for_players(
             return;
         }
         1 => {
-            info!("Waiting for Player2");
+            //info!("Waiting for Player2");
             return;
         }
         2 => {
@@ -288,9 +269,9 @@ fn main() {
                 .continue_to_state(GameState::Matchmaking),
         )
         .insert_resource(ClearColor(Color::rgb(0.53, 0.53, 0.53)))
-        // .insert_resource(ScheduleRunnerSettings::run_loop(Duration::from_secs_f64(
-        //     TIMESTEP_5_PER_SECOND,
-        // )))
+        .insert_resource(ScheduleRunnerSettings::run_loop(Duration::from_secs_f64(
+            TIMESTEP_5_PER_SECOND,
+        )))
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             window: WindowDescriptor {
                 title: "SpacetimeDB Game".into(),
@@ -299,7 +280,6 @@ fn main() {
             },
             ..default()
         }))
-        //.add_plugin(WebSocketClient::default())
         .add_event::<NetworkEvent>()
         .add_system_set(SystemSet::on_enter(GameState::Matchmaking).with_system(setup))
         // .add_system_set(

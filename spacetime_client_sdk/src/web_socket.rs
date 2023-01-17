@@ -2,7 +2,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::errors::ClientError;
-use crate::messages::{process_msg, SpaceDbMsg};
+use crate::messages::{process_msg, serialize_msg, SpaceDbRequest, SpaceDbResponse};
 use crate::ws::{build_req, BuildConnection};
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
 use futures::{join, SinkExt, StreamExt};
@@ -10,7 +10,6 @@ use log::{error, info, warn};
 use tokio::{runtime::Runtime, task::JoinHandle};
 use tokio_tungstenite::connect_async;
 use tungstenite::http::Uri;
-use tungstenite::Message;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
@@ -34,7 +33,7 @@ impl ConnectionHandle {
 pub enum NetworkEvent {
     Connected(ConnectionHandle),
     Disconnected(ConnectionHandle),
-    Message(ConnectionHandle, SpaceDbMsg),
+    Message(ConnectionHandle, SpaceDbResponse),
     Error(Option<ConnectionHandle>, ClientError),
 }
 
@@ -43,10 +42,14 @@ pub struct Client {
     handle: Option<JoinHandle<()>>,
     rx: Option<Arc<Receiver<NetworkEvent>>>,
     tx: Option<Arc<Sender<tungstenite::Message>>>,
+    con: BuildConnection,
 }
 
 impl Client {
-    pub fn new() -> Result<Self, ClientError> {
+    pub fn new(endpoint: String) -> Result<Self, ClientError> {
+        let url = Uri::from_str(&endpoint)?;
+        let con = BuildConnection::new(url);
+
         Ok(Client {
             rt: Arc::new(
                 tokio::runtime::Builder::new_multi_thread()
@@ -56,6 +59,7 @@ impl Client {
             handle: None,
             rx: None,
             tx: None,
+            con,
         })
     }
 
@@ -63,16 +67,15 @@ impl Client {
         self.handle.is_some() && self.rx.is_some() && self.tx.is_some()
     }
 
-    pub fn connect(&mut self, endpoint: String) -> Result<(), ClientError> {
-        info!("Connecting to: {}...", endpoint);
-        let url = Uri::from_str(&endpoint)?;
-        let url = BuildConnection::new(url);
-        let request = build_req(url).body(())?;
+    pub fn connect(&mut self) -> Result<(), ClientError> {
+        let url = self.con.url.clone();
+        info!("Connecting to: {}...", &url);
+        let request = build_req(&self.con).body(())?;
         let (ev_tx, ev_rx) = unbounded();
         let (from_handler_tx, from_handler_rx) = unbounded();
 
         let event_loop = async move {
-            let (ws_stream, _) = match connect_async(request).await {
+            let (ws_stream, response) = match connect_async(request).await {
                 Ok(x) => x,
                 Err(err) => {
                     ev_tx
@@ -81,7 +84,12 @@ impl Client {
                     return;
                 }
             };
-            info!("Connected to: {} DONE", endpoint);
+            info!("Connected to: {} DONE", url);
+            if let Some(token) = response.headers().get("spacetime-identity-token") {
+                if let Ok(token) = token.to_str() {
+                    self.con.auth = Some(token.to_string());
+                }
+            }
 
             let (mut write, read) = ws_stream.split();
             ev_tx
@@ -110,9 +118,8 @@ impl Client {
                             warn!("failed to forward message to sink: {}", e);
                         }
                         Ok(ev) => {
-                            dbg!(&ev);
                             if let Err(e) = write.send(ev).await {
-                                warn!("failed to send message to server: {}", e);
+                                error!("failed to send message to server: {}", e);
                             }
                         }
                     }
@@ -140,6 +147,12 @@ impl Client {
         } else {
             warn!("trying to receive message with an uninitialized client");
             None
+        }
+    }
+
+    pub fn send_message(&self, msg: SpaceDbRequest) {
+        if let Some(msg) = serialize_msg(&self.con, msg) {
+            self.send_raw_message(msg);
         }
     }
 

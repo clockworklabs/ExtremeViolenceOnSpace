@@ -20,12 +20,11 @@ impl WsMsg {
 }
 
 pub(crate) fn setup_net(mut commands: Commands) {
-    let mut client = Client::new().expect("Fail to build ws client");
-    client
-        .connect(
-            "ws://127.0.0.1:3000/database/subscribe?name_or_address=extremeviolenceonspace".into(),
-        )
-        .unwrap();
+    let mut client = Client::new(
+        "ws://127.0.0.1:3000/database/subscribe?name_or_address=extremeviolenceonspace".into(),
+    )
+    .expect("Fail to build ws client");
+    client.connect().expect("Fail to connect to SpaceTimeDb");
 
     commands.insert_resource(WsClient {
         client: Arc::new(client),

@@ -1,3 +1,4 @@
+use crate::messages::SpaceToken;
 use base64::{engine::general_purpose, Engine as _};
 use hyper::http::request::Builder;
 use sha1::{Digest, Sha1};
@@ -15,19 +16,26 @@ pub enum Protocol {
     Binary,
 }
 
+#[derive(Debug, Clone)]
 pub struct BuildConnection {
-    protocol: Protocol,
-    auth: Option<String>,
-    url: Uri,
+    pub(crate) protocol: Protocol,
+    pub(crate) auth: Option<SpaceToken>,
+    pub(crate) url: Uri,
 }
 
 impl BuildConnection {
     pub fn new(url: Uri) -> Self {
         Self {
-            protocol: Protocol::Binary,
+            protocol: Protocol::Text,
             auth: None,
             url,
         }
+    }
+
+    pub fn with_auth(self, auth: SpaceToken) -> Self {
+        let mut x = self;
+        x.auth = Some(auth);
+        x
     }
 }
 
@@ -40,7 +48,7 @@ pub fn accept_key(key: &[u8]) -> String {
     general_purpose::STANDARD.encode(digest)
 }
 
-pub fn build_req(con: BuildConnection) -> Builder {
+pub fn build_req(con: &BuildConnection) -> Builder {
     let protocol = match con.protocol {
         Protocol::Text => "v1.text.spacetimedb",
         Protocol::Binary => "v1.bin.spacetimedb",
@@ -61,5 +69,5 @@ pub fn build_req(con: BuildConnection) -> Builder {
     } else {
         b
     }
-    .uri(con.url)
+    .uri(&con.url)
 }
