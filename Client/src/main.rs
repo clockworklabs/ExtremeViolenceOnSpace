@@ -19,6 +19,7 @@ use bevy::prelude::*;
 use bevy_asset_loader::prelude::*;
 use bevy_ggrs::*;
 use ggrs::{Message, NonBlockingSocket, PlayerType};
+use spacetime_client_sdk::messages::SpaceDbResponse;
 use spacetime_client_sdk::web_socket::NetworkEvent;
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
@@ -153,21 +154,34 @@ fn wait_for_players(
         return;
     }
     let mut clients = HashMap::with_capacity(2);
-    if let Some(id) = &socket.client_id {
-        clients.insert(PlayerId::Two, id.clone());
-    }
 
     for msg in socket.client.try_recv() {
         match msg {
             NetworkEvent::Connected(client_id) => {
                 socket.client_id = Some(client_id.clone());
                 create_new_player(&socket.client, PlayerId::One, &client_id);
-                clients.insert(PlayerId::One, client_id);
             }
             NetworkEvent::Message(ref client_id, msg) => {
                 warn!("Get {msg:?}");
-                if socket.client_id.as_ref() != Some(client_id) {
-                    clients.insert(PlayerId::Two, client_id.clone());
+                match msg {
+                    SpaceDbResponse::SubscriptionUpdate(table) => {
+                        for x in table.table_updates {
+                            if x.table_name == "PlayerComponent" {
+                                info!("Inserting players...");
+                                for row in x.table_row_operations {
+                                    info!("Row player {:?}", &row);
+                                    let player_id = *row.row[0].as_u8().unwrap();
+                                    let player = match player_id {
+                                        0 => PlayerId::One,
+                                        1 => PlayerId::Two,
+                                        x => panic!("Invalid PlayerId {x}"),
+                                    };
+                                    clients.insert(player, client_id.clone());
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
             NetworkEvent::Disconnected(_) => {

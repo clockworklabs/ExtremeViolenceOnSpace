@@ -2,13 +2,15 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::errors::ClientError;
-use crate::messages::{process_msg, serialize_msg, SpaceDbRequest, SpaceDbResponse};
+use crate::messages::{
+    process_msg, serialize_msg, IdentityTokenJson, SpaceDbRequest, SpaceDbResponse,
+};
 use crate::ws::{build_req, BuildConnection};
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
 use futures::{join, SinkExt, StreamExt};
 use log::{error, info, warn};
 use tokio::{runtime::Runtime, task::JoinHandle};
-use tokio_tungstenite::connect_async;
+use tokio_tungstenite::{client_async, connect_async};
 use tungstenite::http::Uri;
 use uuid::Uuid;
 
@@ -46,8 +48,9 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(endpoint: String) -> Result<Self, ClientError> {
-        let url = Uri::from_str(&endpoint)?;
+    pub fn new(host: &str, name_or_address: &str) -> Result<Self, ClientError> {
+        let url = format!("ws://{host}/database/subscribe?name_or_address={name_or_address}");
+        let url = Uri::from_str(&url)?;
         let con = BuildConnection::new(url);
 
         Ok(Client {
@@ -67,15 +70,54 @@ impl Client {
         self.handle.is_some() && self.rx.is_some() && self.tx.is_some()
     }
 
-    pub fn connect(&mut self) -> Result<(), ClientError> {
-        let url = self.con.url.clone();
-        info!("Connecting to: {}...", &url);
+    fn login(&mut self) -> Result<BuildConnection, ClientError> {
+        let con = self.con.clone();
+
+        info!("Login to: {}...", &con.url);
         let request = build_req(&self.con).body(())?;
+        let event_loop = async move {
+            match connect_async(request).await {
+                Ok((_, response)) => {
+                    info!("Logged into: {} DONE", con.url);
+                    //dbg!(&response);
+                    let token = response
+                        .headers()
+                        .get("spacetime-identity-token")
+                        .map(|x| x.to_str());
+                    let identity = response
+                        .headers()
+                        .get("spacetime-identity")
+                        .map(|x| x.to_str());
+
+                    match (token, identity) {
+                        (Some(Ok(token)), Some(Ok(identity))) => {
+                            let t = IdentityTokenJson::new(identity, token);
+                            return Ok(con.with_auth(t));
+                        }
+                        _ => {
+                            warn!("Response not return auth headers");
+                            Err(ClientError::AuthFailed)
+                        }
+                    }
+                }
+                Err(err) => Err(err.into()),
+            }
+        };
+
+        self.rt.block_on(event_loop)
+    }
+
+    pub fn connect(&mut self) -> Result<(), ClientError> {
+        let con = self.login()?;
+        //let con = self.con.clone();
         let (ev_tx, ev_rx) = unbounded();
         let (from_handler_tx, from_handler_rx) = unbounded();
+        let url = con.url.clone();
+        let request = build_req(&con).body(())?;
+        info!("Connecting to: {}...", &url);
 
         let event_loop = async move {
-            let (ws_stream, response) = match connect_async(request).await {
+            let (ws_stream, _) = match connect_async(request).await {
                 Ok(x) => x,
                 Err(err) => {
                     ev_tx
@@ -84,13 +126,8 @@ impl Client {
                     return;
                 }
             };
-            info!("Connected to: {} DONE", url);
-            if let Some(token) = response.headers().get("spacetime-identity-token") {
-                if let Ok(token) = token.to_str() {
-                    self.con.auth = Some(token.to_string());
-                }
-            }
-
+            info!("Connected to: {}...", &url);
+            //dbg!(response);
             let (mut write, read) = ws_stream.split();
             ev_tx
                 .send(NetworkEvent::Connected(ConnectionHandle::new()))
@@ -98,6 +135,7 @@ impl Client {
 
             let read_handle = async move {
                 read.for_each(|msg| async {
+                    dbg!(&msg);
                     if let Some(msg) = process_msg(msg) {
                         ev_tx.send(msg).expect("failed to forward network message");
                     }

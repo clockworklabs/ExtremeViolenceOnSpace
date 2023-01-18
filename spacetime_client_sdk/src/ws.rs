@@ -1,10 +1,11 @@
-use crate::messages::SpaceToken;
+use crate::messages::IdentityTokenJson;
+use base64::prelude::BASE64_STANDARD;
 use base64::{engine::general_purpose, Engine as _};
 use hyper::http::request::Builder;
 use sha1::{Digest, Sha1};
 use tungstenite::http::header::{
-    CONNECTION, HOST, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_PROTOCOL,
-    SEC_WEBSOCKET_VERSION, UPGRADE,
+    AUTHORIZATION, CONNECTION, HOST, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY,
+    SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, UPGRADE,
 };
 use tungstenite::http::{Request, Uri};
 
@@ -19,7 +20,7 @@ pub enum Protocol {
 #[derive(Debug, Clone)]
 pub struct BuildConnection {
     pub(crate) protocol: Protocol,
-    pub(crate) auth: Option<SpaceToken>,
+    pub(crate) auth: Option<IdentityTokenJson>,
     pub(crate) url: Uri,
 }
 
@@ -32,7 +33,7 @@ impl BuildConnection {
         }
     }
 
-    pub fn with_auth(self, auth: SpaceToken) -> Self {
+    pub fn with_auth(self, auth: IdentityTokenJson) -> Self {
         let mut x = self;
         x.auth = Some(auth);
         x
@@ -63,6 +64,13 @@ pub fn build_req(con: &BuildConnection) -> Builder {
         .header(SEC_WEBSOCKET_VERSION, "13")
         .header(SEC_WEBSOCKET_ACCEPT, accept_key(key.as_bytes()))
         .header(SEC_WEBSOCKET_KEY, key);
+
+    let b = if let Some(auth) = &con.auth {
+        let base64 = BASE64_STANDARD.encode(&format!("token:{}", auth.token));
+        b.header(AUTHORIZATION, &format!("Basic {}", base64))
+    } else {
+        b
+    };
 
     if let Some(host) = con.url.host() {
         b.header(HOST, host)

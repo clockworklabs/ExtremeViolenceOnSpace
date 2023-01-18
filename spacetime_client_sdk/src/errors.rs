@@ -3,6 +3,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum ClientError {
+    #[error("Auth Failed")]
+    AuthFailed,
     #[error("JSON Error: `{0}`")]
     Json(#[from] serde_json::Error),
     #[error("IO Error: `{0}`")]
