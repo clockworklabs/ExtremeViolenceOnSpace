@@ -6,11 +6,11 @@ use crate::messages::{
     process_msg, serialize_msg, IdentityTokenJson, SpaceDbRequest, SpaceDbResponse,
 };
 use crate::ws::{build_req, BuildConnection};
-use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
-use futures::{join, SinkExt, StreamExt};
+use crossbeam_channel::{unbounded, Receiver, TryRecvError};
+use futures::{SinkExt, StreamExt};
 use log::{error, info, warn};
 use tokio::{runtime::Runtime, task::JoinHandle};
-use tokio_tungstenite::{client_async, connect_async};
+use tokio_tungstenite::connect_async;
 use tungstenite::http::Uri;
 use uuid::Uuid;
 
@@ -43,7 +43,7 @@ pub struct Client {
     rt: Arc<Runtime>,
     handle: Option<JoinHandle<()>>,
     rx: Option<Arc<Receiver<NetworkEvent>>>,
-    tx: Option<Arc<Sender<tungstenite::Message>>>,
+    tx: Option<Arc<tokio::sync::mpsc::UnboundedSender<tungstenite::Message>>>,
     con: BuildConnection,
 }
 
@@ -111,7 +111,7 @@ impl Client {
         let con = self.login()?;
         //let con = self.con.clone();
         let (ev_tx, ev_rx) = unbounded();
-        let (from_handler_tx, from_handler_rx) = unbounded();
+        let (from_handler_tx, mut from_handler_rx) = tokio::sync::mpsc::unbounded_channel();
         let url = con.url.clone();
         let request = build_req(&con).body(())?;
         info!("Connecting to: {}...", &url);
@@ -128,42 +128,64 @@ impl Client {
             };
             info!("Connected to: {}...", &url);
             //dbg!(response);
-            let (mut write, read) = ws_stream.split();
+            let (mut write, mut read) = ws_stream.split();
             ev_tx
                 .send(NetworkEvent::Connected(ConnectionHandle::new()))
                 .expect("failed to send network event");
 
-            let read_handle = async move {
-                read.for_each(|msg| async {
-                    dbg!(&msg);
-                    if let Some(msg) = process_msg(msg) {
-                        ev_tx.send(msg).expect("failed to forward network message");
+            loop {
+                tokio::select! {
+                    //Receive messages from the websocket
+                    msg = read.next() => {
+                        if let Some(msg) = msg {
+                            if let Some(msg) = process_msg(msg) {
+                                ev_tx.send(msg).expect("failed to forward network message");
+                            }
+                        }
                     }
-                })
-                .await;
-            };
-
-            let write_handle = async move {
-                loop {
-                    let req = from_handler_rx.try_recv();
-
-                    match req {
-                        Err(TryRecvError::Empty) => {
-                            // TODO: REPLACE SPINLOCK !
-                            continue;
-                        }
-                        Err(e) => {
-                            warn!("failed to forward message to sink: {}", e);
-                        }
-                        Ok(ev) => {
-                            if let Err(e) = write.send(ev).await {
-                                error!("failed to send message to server: {}", e);
+                    //Receive messages from the game
+                    game_msg = from_handler_rx.recv() => {
+                        match game_msg {
+                            None => {
+                                warn!("failed to forward message to sink");
+                            }
+                            Some(ev) => {
+                                if let Err(e) = write.send(ev).await {
+                                    error!("failed to send message to server: {}", e);
+                                }
                             }
                         }
                     }
                 }
-            };
-            join!(read_handle, write_handle);
+            }
+            //
+            // let read_handle = async move {
+            //     read.for_each(|msg| async {
+            //         dbg!(&msg);
+            //         if let Some(msg) = process_msg(msg) {
+            //             ev_tx.send(msg).expect("failed to forward network message");
+            //         }
+            //     })
+            //     .await;
+            // };
+            //
+            // let write_handle = async move {
+            //     loop {
+            //         let req = from_handler_rx.recv();
+            //
+            //         match req {
+            //             Err(e) => {
+            //                 warn!("failed to forward message to sink: {}", e);
+            //             }
+            //             Ok(ev) => {
+            //                 if let Err(e) = write.send(ev).await {
+            //                     error!("failed to send message to server: {}", e);
+            //                 }
+            //             }
+            //         }
+            //     }
+            // };
+            //join!(read_handle, write_handle);
         };
         self.handle = Some(self.rt.spawn(event_loop));
         self.rx = Some(Arc::new(ev_rx));

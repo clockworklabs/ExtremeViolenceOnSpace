@@ -3,7 +3,6 @@ mod bevy_ws;
 mod components;
 mod database;
 mod input;
-
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -130,6 +129,7 @@ fn setup(mut commands: Commands) {
     commands.spawn(camera_bundle);
 
     setup_net(commands);
+    //setup_net2(commands);
 }
 
 struct MsgRec {
@@ -160,6 +160,7 @@ fn wait_for_players(
             NetworkEvent::Connected(client_id) => {
                 socket.client_id = Some(client_id.clone());
                 create_new_player(&socket.client, PlayerId::One, &client_id);
+                create_new_player(&socket.client, PlayerId::Two, &client_id);
             }
             NetworkEvent::Message(ref client_id, msg) => {
                 warn!("Get {msg:?}");
@@ -169,13 +170,13 @@ fn wait_for_players(
                             if x.table_name == "PlayerComponent" {
                                 info!("Inserting players...");
                                 for row in x.table_row_operations {
-                                    info!("Row player {:?}", &row);
-                                    let player_id = *row.row[0].as_u8().unwrap();
+                                    let player_id = *row.row[0].as_i8().unwrap();
                                     let player = match player_id {
                                         0 => PlayerId::One,
                                         1 => PlayerId::Two,
                                         x => panic!("Invalid PlayerId {x}"),
                                     };
+                                    info!("Row player {:?} {:?}", &player, &row);
                                     clients.insert(player, client_id.clone());
                                 }
                             }
@@ -191,6 +192,7 @@ fn wait_for_players(
             NetworkEvent::Error(client_id, _) => return,
         };
     }
+    dbg!(&clients);
     let num_players = 2;
     match clients.len() {
         0 => {

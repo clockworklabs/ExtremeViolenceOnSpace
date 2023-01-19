@@ -150,7 +150,7 @@ pub(crate) fn serialize_msg(
 pub(crate) fn process_msg(
     msg: Result<tungstenite::Message, tungstenite::Error>,
 ) -> Option<NetworkEvent> {
-    println!("Received: {:?}", &msg);
+    println!("Received MSG: {:?}", &msg);
     match msg {
         Ok(msg) => match msg {
             WsMessage::Text(txt) => {
