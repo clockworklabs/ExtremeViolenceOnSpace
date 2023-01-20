@@ -18,6 +18,12 @@ pub enum SpaceDbResponse {
     IdentityToken(IdentityTokenJson),
 }
 
+impl SpaceDbResponse {
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IdentityTokenJson {
     pub identity: String,
@@ -160,7 +166,7 @@ pub(crate) fn process_msg(
             }
             WsMessage::Binary(bin) => {
                 let msg = ApiMessage::parse_from_bytes(&bin).unwrap();
-                println!("Parsed: {:?}", &msg);
+                println!("Parsed BIN: {:?}", &msg);
 
                 if let Some(msg) = msg.field_type {
                     let handle = ConnectionHandle::new();
@@ -175,47 +181,48 @@ pub(crate) fn process_msg(
                                     &token.token,
                                 ))
                             }
-                            Message_oneof_type::subscriptionUpdate(ev) => {
-                                let mut updates = Vec::with_capacity(ev.tableUpdates.len());
-
-                                for x in ev.tableUpdates {
-                                    let mut ops = Vec::with_capacity(x.tableRowOperations.len());
-
-                                    for o in x.tableRowOperations {
-                                        let op = match o.op {
-                                            TableRowOperation_OperationType::DELETE => {
-                                                TableOp::Delete
-                                            }
-                                            TableRowOperation_OperationType::INSERT => {
-                                                TableOp::Insert
-                                            }
-                                        };
-
-                                        dbg!(&o.row_pk);
-
-                                        let (row_pk, len) = PrimaryKey::decode(&o.row_pk);
-                                        // let row = TupleValue::decode()
-                                        dbg!(&row_pk);
-                                        // ops.push(TableRowOperationJson {
-                                        //     op,
-                                        //     row_pk: row_pk.to_string(),
-                                        //     row: vec![],
-                                        // })
-                                    }
-
-                                    let row = TableUpdateJson {
-                                        table_id: x.tableId,
-                                        table_name: x.tableName,
-                                        table_row_operations: ops,
-                                    };
-
-                                    updates.push(row);
-                                }
-
-                                let up = SubscriptionUpdateJson {
-                                    table_updates: updates,
-                                };
-                                SpaceDbResponse::SubscriptionUpdate(up)
+                            Message_oneof_type::subscriptionUpdate(_ev) => {
+                                todo!()
+                                // let mut updates = Vec::with_capacity(ev.tableUpdates.len());
+                                //
+                                // for mut x in ev.tableUpdates {
+                                //     let mut ops = Vec::with_capacity(x.tableRowOperations.len());
+                                //
+                                //     for o in x.tableRowOperations {
+                                //         let op = match o.op {
+                                //             TableRowOperation_OperationType::DELETE => {
+                                //                 TableOp::Delete
+                                //             }
+                                //             TableRowOperation_OperationType::INSERT => {
+                                //                 TableOp::Insert
+                                //             }
+                                //         };
+                                //
+                                //         dbg!(&o.row_pk);
+                                //
+                                //         let row_pk = PrimaryKey::decode(&o.row_pk).unwrap();
+                                //         // let row = TupleValue::decode()
+                                //         dbg!(&row_pk);
+                                //         // ops.push(TableRowOperationJson {
+                                //         //     op,
+                                //         //     row_pk: row_pk.to_string(),
+                                //         //     row: vec![],
+                                //         // })
+                                //     }
+                                //
+                                //     let row = TableUpdateJson {
+                                //         table_id: x.tableId,
+                                //         table_name: x.tableName,
+                                //         table_row_operations: ops,
+                                //     };
+                                //
+                                //     updates.push(row);
+                                // }
+                                //
+                                // let up = SubscriptionUpdateJson {
+                                //     table_updates: updates,
+                                // };
+                                // SpaceDbResponse::SubscriptionUpdate(up)
                             }
                             Message_oneof_type::transactionUpdate(_) => return None,
                             Message_oneof_type::functionCall(_) | Message_oneof_type::event(_) => {

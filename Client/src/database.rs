@@ -12,6 +12,12 @@ pub(crate) enum PlayerId {
     Two,
 }
 
+impl Default for PlayerId {
+    fn default() -> Self {
+        Self::One
+    }
+}
+
 impl PlayerId {
     pub fn as_idx(&self) -> usize {
         match self {

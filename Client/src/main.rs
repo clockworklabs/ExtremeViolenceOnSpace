@@ -3,21 +3,27 @@ mod bevy_ws;
 mod components;
 mod database;
 mod input;
+mod player;
+mod screen;
+mod sprites;
+
 use std::collections::HashMap;
 use std::time::Duration;
 
-use crate::bevy_ws::{
-    consume_messages, handle_network_events, listen_for_events, setup_net, WsClient,
-};
+use crate::bevy_ws::*;
 use crate::components::*;
 use crate::database::*;
 use crate::input::*;
+use crate::player::*;
+
 use bevy::app::ScheduleRunnerSettings;
-use bevy::math::Vec3Swizzles;
 use bevy::prelude::*;
 use bevy_asset_loader::prelude::*;
-use bevy_ggrs::*;
+use bevy_ggrs::{GGRSPlugin, Session};
 use ggrs::{Message, NonBlockingSocket, PlayerType};
+
+use crate::screen::screen;
+use crate::sprites::animate_sprite;
 use spacetime_client_sdk::messages::SpaceDbResponse;
 use spacetime_client_sdk::web_socket::NetworkEvent;
 
@@ -28,15 +34,19 @@ enum GameState {
     InGame,
 }
 
+pub const PLAYER_SIZE: (f64, f64) = (3121.0, 816.0);
+
 #[derive(AssetCollection, Resource)]
 struct ImageAssets {
     #[asset(path = "images/Alien.png")]
-    alien: Handle<Image>,
+    #[asset(texture_atlas(tile_size_x = 3121., tile_size_y = 816., columns = 4, rows = 1))]
+    alien: Handle<TextureAtlas>,
     #[asset(path = "images/CowBoy.png")]
-    cowboy: Handle<Image>,
+    #[asset(texture_atlas(tile_size_x = 3121., tile_size_y = 816., columns = 4, rows = 1))]
+    cowboy: Handle<TextureAtlas>,
 }
 
-const MAP_SIZE: i32 = 41;
+const MAP_SIZE: i32 = 300;
 
 struct GgrsConfig;
 
@@ -48,88 +58,16 @@ impl ggrs::Config for GgrsConfig {
     type Address = String;
 }
 
-fn spawn_players(mut commands: Commands, asset_server: Res<AssetServer>) {
-    //, mut rip: ResMut<RollbackIdProvider>
+fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.spawn((Camera2dBundle::default(), MainCamera));
+
     commands.spawn(SpriteBundle {
         transform: Transform::from_scale(Vec3::new(1.5, 1.5, 0.0)),
         texture: asset_server.load("images/Background.png"),
         ..Default::default()
     });
 
-    let size = 300.;
-
-    // Player 1
-    commands
-        .spawn(SpriteBundle {
-            transform: Transform::from_translation(Vec3::new(-200., 0., 100.)),
-            sprite: Sprite {
-                custom_size: Some(Vec2::new(size, size)),
-                ..default()
-            },
-            texture: asset_server.load("images/CowBoy.png"),
-            ..default()
-        })
-        .insert(Player {
-            handle: PlayerId::One,
-        })
-        .insert(BulletReady(true))
-        .insert(MoveDir(-Vec2::X))
-    //    .insert(Rollback::new(rip.next_id()))
-    ;
-
-    // Player 2
-    commands
-        .spawn(SpriteBundle {
-            transform: Transform::from_translation(Vec3::new(200., 0., 100.)),
-            sprite: Sprite {
-                custom_size: Some(Vec2::new(size, size)),
-                ..default()
-            },
-            texture: asset_server.load("images/Alien.png"),
-            ..default()
-        })
-        .insert(Player {
-            handle: PlayerId::Two,
-        })
-        .insert(BulletReady(true))
-        .insert(MoveDir(Vec2::X))
-    //    .insert(Rollback::new(rip.next_id()))
-    ;
-}
-
-fn move_players(
-    inputs: Res<PlayerInputs<GgrsConfig>>,
-    mut player_query: Query<(&mut Transform, &mut MoveDir, &Player)>,
-) {
-    for (mut transform, mut move_direction, player) in player_query.iter_mut() {
-        let (input, _) = inputs[player.as_idx()];
-        let direction = direction(input);
-
-        if direction == Vec2::ZERO {
-            continue;
-        }
-
-        move_direction.0 = direction;
-
-        let move_speed = 0.13;
-        let move_delta = direction * move_speed;
-
-        let old_pos = transform.translation.xy();
-        let limit = Vec2::splat(MAP_SIZE as f32 / 2. - 0.5);
-        let new_pos = (old_pos + move_delta).clamp(-limit, limit);
-
-        transform.translation.x = new_pos.x;
-        transform.translation.y = new_pos.y;
-    }
-}
-
-fn setup(mut commands: Commands) {
-    let camera_bundle = Camera2dBundle::default();
-    //camera_bundle.projection.scaling_mode = ScalingMode::FixedVertical(10.);
-    commands.spawn(camera_bundle);
-
     setup_net(commands);
-    //setup_net2(commands);
 }
 
 struct MsgRec {
@@ -140,7 +78,23 @@ impl NonBlockingSocket<String> for MsgRec {
     fn send_to(&mut self, msg: &Message, addr: &String) {}
 
     fn receive_all_messages(&mut self) -> Vec<(String, Message)> {
-        //self.socket.iter().map(|msg| )
+        // let mut received_messages = Vec::new();
+        //
+        // loop {
+        //     match self.socket.client.try_recv() {
+        //         None => return received_messages,
+        //         Some(msg) => match msg {
+        //             NetworkEvent::Connected(_) => continue,
+        //             NetworkEvent::Disconnected(_) => return received_messages,
+        //             NetworkEvent::Message(handle, msg) => {}
+        //             NetworkEvent::Error(handle, err) => {
+        //                 panic!("{:?} on {:?}", err, &handle)
+        //             }
+        //         },
+        //     }
+        // }
+        //
+        // received_messages
         vec![]
     }
 }
@@ -200,7 +154,7 @@ fn wait_for_players(
             return;
         }
         1 => {
-            //info!("Waiting for Player2");
+            info!("Waiting for Player2");
             return;
         }
         2 => {
@@ -216,6 +170,9 @@ fn wait_for_players(
 
     for (player_handle, player_rec) in clients {
         dbg!(player_handle);
+        if player_handle == PlayerId::One {
+            commands.insert_resource(LocalPlayerHandle(player_handle));
+        }
         session_builder = session_builder
             .add_player(
                 PlayerType::Remote(player_rec.uuid.to_string()),
@@ -235,33 +192,6 @@ fn wait_for_players(
     commands.insert_resource(Session::P2PSession(session));
     info!("All peers have joined, going in-game");
     state.set(GameState::InGame).unwrap();
-}
-
-#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
-struct LocalPlayerHandle(usize);
-
-fn camera_follow(
-    player_handle: Option<Res<LocalPlayerHandle>>,
-    player_query: Query<(&Player, &Transform)>,
-    mut camera_query: Query<&mut Transform, (With<Camera>, Without<Player>)>,
-) {
-    let player_handle = match player_handle {
-        Some(handle) => handle.0,
-        None => return, // Session hasn't started yet
-    };
-
-    for (player, player_transform) in player_query.iter() {
-        if player.as_idx() != player_handle {
-            continue;
-        }
-
-        let pos = player_transform.translation;
-
-        for mut transform in camera_query.iter_mut() {
-            transform.translation.x = pos.x;
-            transform.translation.y = pos.y;
-        }
-    }
 }
 
 const TIMESTEP_5_PER_SECOND: f64 = 30.0 / 60.0;
@@ -285,27 +215,33 @@ fn main() {
                 .continue_to_state(GameState::Matchmaking),
         )
         .insert_resource(ClearColor(Color::rgb(0.53, 0.53, 0.53)))
-        .insert_resource(ScheduleRunnerSettings::run_loop(Duration::from_secs_f64(
-            TIMESTEP_5_PER_SECOND,
-        )))
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            window: WindowDescriptor {
-                title: "SpacetimeDB Game".into(),
-                fit_canvas_to_parent: true,
-                ..default()
-            },
-            ..default()
-        }))
+        .insert_resource(Msaa { samples: 1 })
+        // .insert_resource(ScheduleRunnerSettings::run_loop(Duration::from_secs_f64(
+        //     TIMESTEP_5_PER_SECOND,
+        // )))
+        .add_plugins(
+            DefaultPlugins
+                .set(WindowPlugin {
+                    window: WindowDescriptor {
+                        title: "SpacetimeDB Game".into(),
+                        fit_canvas_to_parent: true,
+                        ..default()
+                    },
+                    ..default()
+                })
+                .set(ImagePlugin::default_nearest()),
+        )
         .add_event::<NetworkEvent>()
         .add_system_set(SystemSet::on_enter(GameState::Matchmaking).with_system(setup))
         // .add_system_set(
         //     SystemSet::on_update(GameState::Matchmaking).with_system(handle_network_events),
         // )
         .add_system_set(SystemSet::on_update(GameState::Matchmaking).with_system(wait_for_players))
-        // .add_system_set(SystemSet::on_update(GameState::Matchmaking).with_system(consume_messages))
-        // .add_system_set(SystemSet::on_update(GameState::Matchmaking).with_system(listen_for_events))
+        .add_system_set(SystemSet::on_update(GameState::InGame).with_system(screen))
+        .add_system_set(SystemSet::on_update(GameState::InGame).with_system(animate_sprite))
         .add_system_set(SystemSet::on_enter(GameState::InGame).with_system(spawn_players))
         .add_system_set(SystemSet::on_update(GameState::InGame).with_system(camera_follow))
+        .add_system_set(SystemSet::on_update(GameState::InGame).with_system(input2))
         .add_system(bevy::window::close_on_esc)
         .run();
 }

@@ -1,4 +1,4 @@
-use spacetimedb::{println, spacetimedb, Hash};
+use spacetimedb::{println, spacetimedb, Hash, ReducerContext};
 
 #[spacetimedb(table)]
 pub struct PlayerComponent {
@@ -11,7 +11,8 @@ pub struct PlayerComponent {
 }
 
 #[spacetimedb(reducer)]
-pub fn create_new_player(identity: Hash, _timestamp: u64, entity_id: u64, input: u8) {
+
+pub fn create_new_player(ctx: ReducerContext, entity_id: u64, input: u8) {
     // Make sure this player doesn't already exist
     if PlayerComponent::filter_by_entity_id(entity_id).is_some() {
         println!("A player with this entity_id already exists: {}", entity_id);
@@ -19,7 +20,7 @@ pub fn create_new_player(identity: Hash, _timestamp: u64, entity_id: u64, input:
         println!("Creating player with this ID: {}", entity_id);
         PlayerComponent::insert(PlayerComponent {
             entity_id,
-            owner_id: identity,
+            owner_id: ctx.sender,
             input,
         });
         println!("Player created: {}", entity_id);
@@ -27,7 +28,7 @@ pub fn create_new_player(identity: Hash, _timestamp: u64, entity_id: u64, input:
 }
 
 #[spacetimedb(reducer)]
-pub fn move_player(identity: Hash, entity_id: u64, input: u8) {
+pub fn move_player(ctx: ReducerContext, entity_id: u64, input: u8) {
     if entity_id > 2 {
         panic!("This is a 2 player game, so entity_id <= 2");
     }
@@ -36,7 +37,7 @@ pub fn move_player(identity: Hash, entity_id: u64, input: u8) {
         PlayerComponent::filter_by_entity_id(entity_id).expect("This player doesn't exist.");
 
     // Make sure this identity owns this player
-    if player.owner_id != identity {
+    if player.owner_id != ctx.sender {
         println!("This identity doesn't own this player! (allowed for now)");
     }
 
@@ -44,7 +45,7 @@ pub fn move_player(identity: Hash, entity_id: u64, input: u8) {
         entity_id,
         PlayerComponent {
             entity_id,
-            owner_id: identity,
+            owner_id: ctx.sender,
             input,
         },
     );
