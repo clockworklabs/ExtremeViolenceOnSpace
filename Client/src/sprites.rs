@@ -4,10 +4,11 @@ use bevy_asset_loader::prelude::*;
 
 //Must match  columns bellow
 const SPRITE_FRAMES: usize = 5;
-const DEFAULT_ANIMATION_FPS: f32 = 5.0;
 
 #[derive(AssetCollection, Resource)]
 pub(crate) struct ImageAssets {
+    #[asset(path = "sounds/shot.ogg")]
+    pub(crate) bullet_shoot: Handle<AudioSource>,
     #[asset(path = "images/Bullet_alien.png")]
     pub(crate) bullet_alien: Handle<Image>,
     #[asset(path = "images/Bullet_cowboy.png")]
@@ -118,7 +119,7 @@ impl SpritesheetAnimator {
         // }
         self.cur_frame_idx = 0;
         // Set the sprite frame and x-flip value
-        if let Some(texture_idx) = self.animation.frames().get(0) {
+        if let Some(texture_idx) = self.animation.frames().first() {
             sprite.index = ((*texture_idx).abs() - 1) as usize;
             sprite.flip_x = (*texture_idx) < 0; // flip texture if negative
         }

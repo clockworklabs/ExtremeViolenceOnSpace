@@ -57,7 +57,7 @@ pub(crate) fn wait_for_players(
     }
     let mut clients = HashMap::with_capacity(2);
 
-    for msg in socket.client.try_recv() {
+    if let Some(msg) = socket.client.try_recv() {
         match msg {
             NetworkEvent::Connected(client_id) => {
                 socket.client_id = Some(client_id.clone());
@@ -66,25 +66,22 @@ pub(crate) fn wait_for_players(
             }
             NetworkEvent::Message(ref client_id, msg) => {
                 warn!("Get {msg:?}");
-                match msg {
-                    SpaceDbResponse::SubscriptionUpdate(table) => {
-                        for x in table.table_updates {
-                            if x.table_name == "PlayerComponent" {
-                                info!("Inserting players...");
-                                for row in x.table_row_operations {
-                                    let player_id = *row.row[0].as_i8().unwrap();
-                                    let player = match player_id {
-                                        0 => PlayerId::One,
-                                        1 => PlayerId::Two,
-                                        x => panic!("Invalid PlayerId {x}"),
-                                    };
-                                    info!("Row player {:?} {:?}", &player, &row);
-                                    clients.insert(player, client_id.clone());
-                                }
+                if let SpaceDbResponse::SubscriptionUpdate(table) = msg {
+                    for x in table.table_updates {
+                        if x.table_name == "PlayerComponent" {
+                            info!("Inserting players...");
+                            for row in x.table_row_operations {
+                                let player_id = *row.row[0].as_i8().unwrap();
+                                let player = match player_id {
+                                    0 => PlayerId::One,
+                                    1 => PlayerId::Two,
+                                    x => panic!("Invalid PlayerId {x}"),
+                                };
+                                info!("Row player {:?} {:?}", &player, &row);
+                                clients.insert(player, client_id.clone());
                             }
                         }
                     }
-                    _ => {}
                 }
             }
             NetworkEvent::Disconnected(_) => {
@@ -137,29 +134,26 @@ pub(crate) fn consume_messages(ws: Res<WsClient>, mut player_query: Query<&mut P
             NetworkEvent::Connected(_) => {}
             NetworkEvent::Message(_, msg) => {
                 warn!("CONSUME {msg:?}");
-                match msg {
-                    SpaceDbResponse::TransactionUpdate(table) => {
-                        for x in table.subscription_update.table_updates {
-                            if x.table_name == "PlayerComponent" {
-                                for row in x.table_row_operations {
-                                    let player_id = *row.row[0].as_i8().unwrap();
-                                    let input = *row.row[2].as_i8().unwrap();
-                                    let player = match player_id {
-                                        0 => PlayerId::One,
-                                        1 => PlayerId::Two,
-                                        x => panic!("Invalid PlayerId {x}"),
-                                    };
-                                    info!("Move player {:?}: {input} {:?}", &player, &row);
-                                    for mut p in player_query.iter_mut() {
-                                        if p.handle == player {
-                                            p.input = input as u8;
-                                        }
+                if let SpaceDbResponse::TransactionUpdate(table) = msg {
+                    for x in table.subscription_update.table_updates {
+                        if x.table_name == "PlayerComponent" {
+                            for row in x.table_row_operations {
+                                let player_id = *row.row[0].as_i8().unwrap();
+                                let input = *row.row[2].as_i8().unwrap();
+                                let player = match player_id {
+                                    0 => PlayerId::One,
+                                    1 => PlayerId::Two,
+                                    x => panic!("Invalid PlayerId {x}"),
+                                };
+                                info!("Move player {:?}: {input} {:?}", &player, &row);
+                                for mut p in player_query.iter_mut() {
+                                    if p.handle == player {
+                                        p.input = input as u8;
                                     }
                                 }
                             }
                         }
                     }
-                    _ => {}
                 }
             }
             NetworkEvent::Disconnected(_) => {}

@@ -1,5 +1,4 @@
-use crate::database::{move_player, Player, PlayerId};
-use crate::sprites::{Animation, Facing, SpritesheetAnimator};
+use crate::sprites::{Animation, Facing};
 use bevy::prelude::*;
 
 const INPUT_UP: u8 = 1 << 0;

@@ -19,12 +19,3 @@ pub(crate) struct LocalPlayerHandle(pub(crate) PlayerId);
 
 #[derive(Resource, Default)]
 pub(crate) struct InterludeTimer(pub(crate) usize);
-
-#[derive(SystemLabel, Debug, Clone, Hash, Eq, PartialEq)]
-pub enum Systems {
-    Move,
-    Reload,
-    Fire,
-    MoveBullet,
-    Kill,
-}

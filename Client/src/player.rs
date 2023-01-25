@@ -6,7 +6,7 @@ use crate::components::*;
 use crate::database::*;
 use crate::input::{direction, fire, input};
 use crate::net::WsClient;
-use crate::sprites::{AnimationTimer, ImageAssets, SpritesheetAnimator};
+use crate::sprites::{Animation, AnimationTimer, ImageAssets, SpritesheetAnimator};
 use crate::{GameState, MAP_SIZE};
 
 pub(crate) fn current_player() -> PlayerId {
@@ -135,6 +135,7 @@ pub(crate) fn reload_bullet(mut query: Query<(&mut BulletReady, &Player)>) {
 
 pub(crate) fn fire_bullets(
     mut commands: Commands,
+    audio: Res<Audio>,
     images: Res<ImageAssets>,
     mut player_query: Query<(&Transform, &Player, &mut BulletReady, &MoveDir)>,
 ) {
@@ -157,13 +158,14 @@ pub(crate) fn fire_bullets(
                         .with_rotation(Quat::from_rotation_arc_2d(Vec2::X, move_dir.0)),
                     texture: bullet,
                     sprite: Sprite {
-                        //Making the bullets smaller
+                        //Making the bullets smaller, but still extreme!
                         custom_size: Some(Vec2::new(1920.0 / 20.0, 1080.0 / 20.0)),
                         ..default()
                     },
                     ..default()
                 },
             ));
+            audio.play(images.bullet_shoot.clone());
             bullet_ready.0 = false;
         }
     }
@@ -180,19 +182,30 @@ pub(crate) fn move_bullet(mut query: Query<(&mut Transform, &MoveDir), With<Bull
 const PLAYER_RADIUS: f32 = 24.0;
 const BULLET_RADIUS: f32 = 0.25;
 
+#[allow(clippy::type_complexity)]
 pub(crate) fn kill_players(
     mut commands: Commands,
     mut state: ResMut<State<GameState>>,
-    player_query: Query<(Entity, &Transform), (With<Player>, Without<Bullet>)>,
+    mut player_query: Query<
+        (
+            Entity,
+            &mut TextureAtlasSprite,
+            &mut SpritesheetAnimator,
+            &Transform,
+        ),
+        (With<Player>, Without<Bullet>),
+    >,
     bullet_query: Query<&Transform, With<Bullet>>,
 ) {
-    for (player, player_transform) in player_query.iter() {
+    for (player, mut sprite, mut animator, player_transform) in &mut player_query {
         for bullet_transform in bullet_query.iter() {
             let distance = Vec2::distance(
                 player_transform.translation.xy(),
                 bullet_transform.translation.xy(),
             );
             if distance < PLAYER_RADIUS + BULLET_RADIUS {
+                let facing = animator.animation.facing();
+                animator.set_state(Animation::Dead(facing), &mut sprite);
                 commands.entity(player).despawn_recursive();
                 let _ = state.set(GameState::Interlude);
             }
