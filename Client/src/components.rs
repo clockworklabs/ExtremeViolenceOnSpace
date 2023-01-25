@@ -12,3 +12,12 @@ pub struct MoveDir(pub Vec2);
 /// Used to help identify our main camera
 #[derive(Component)]
 pub struct MainCamera;
+
+#[derive(SystemLabel, Debug, Clone, Hash, Eq, PartialEq)]
+pub enum Systems {
+    Move,
+    Reload,
+    Fire,
+    MoveBullet,
+    Kill,
+}

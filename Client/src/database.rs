@@ -51,4 +51,9 @@ pub(crate) fn create_new_player(db: &Arc<Client>, player: PlayerId, client_id: &
 }
 
 /// Updates the player state in the SpaceTimeDb instance
-pub(crate) fn move_player() {}
+pub(crate) fn move_player(db: &Arc<Client>, player: PlayerId, input: u8) {
+    db.send_message(SpaceDbRequest::FunctionCall {
+        name: "move_player".to_string(),
+        args: vec![TypeValue::U32(player.as_idx() as u32), TypeValue::U8(input)],
+    });
+}

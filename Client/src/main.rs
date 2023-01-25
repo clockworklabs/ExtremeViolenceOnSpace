@@ -4,11 +4,9 @@ mod components;
 mod database;
 mod input;
 mod player;
-mod screen;
 mod sprites;
 
 use std::collections::HashMap;
-use std::time::Duration;
 
 use crate::bevy_ws::*;
 use crate::components::*;
@@ -16,14 +14,12 @@ use crate::database::*;
 use crate::input::*;
 use crate::player::*;
 
-use bevy::app::ScheduleRunnerSettings;
 use bevy::prelude::*;
 use bevy_asset_loader::prelude::*;
 use bevy_ggrs::{GGRSPlugin, Session};
 use ggrs::{Message, NonBlockingSocket, PlayerType};
 
-use crate::screen::screen;
-use crate::sprites::animate_sprite;
+use crate::sprites::{animate_sprite, ImageAssets};
 use spacetime_client_sdk::messages::SpaceDbResponse;
 use spacetime_client_sdk::web_socket::NetworkEvent;
 
@@ -35,16 +31,6 @@ enum GameState {
 }
 
 pub const PLAYER_SIZE: (f64, f64) = (3121.0, 816.0);
-
-#[derive(AssetCollection, Resource)]
-struct ImageAssets {
-    #[asset(path = "images/Alien.png")]
-    #[asset(texture_atlas(tile_size_x = 3121., tile_size_y = 816., columns = 4, rows = 1))]
-    alien: Handle<TextureAtlas>,
-    #[asset(path = "images/CowBoy.png")]
-    #[asset(texture_atlas(tile_size_x = 3121., tile_size_y = 816., columns = 4, rows = 1))]
-    cowboy: Handle<TextureAtlas>,
-}
 
 const MAP_SIZE: i32 = 300;
 
@@ -78,24 +64,24 @@ impl NonBlockingSocket<String> for MsgRec {
     fn send_to(&mut self, msg: &Message, addr: &String) {}
 
     fn receive_all_messages(&mut self) -> Vec<(String, Message)> {
-        // let mut received_messages = Vec::new();
-        //
-        // loop {
-        //     match self.socket.client.try_recv() {
-        //         None => return received_messages,
-        //         Some(msg) => match msg {
-        //             NetworkEvent::Connected(_) => continue,
-        //             NetworkEvent::Disconnected(_) => return received_messages,
-        //             NetworkEvent::Message(handle, msg) => {}
-        //             NetworkEvent::Error(handle, err) => {
-        //                 panic!("{:?} on {:?}", err, &handle)
-        //             }
-        //         },
-        //     }
-        // }
-        //
-        // received_messages
-        vec![]
+        let mut received_messages = Vec::new();
+
+        loop {
+            match self.socket.client.try_recv() {
+                None => return received_messages,
+                Some(msg) => match msg {
+                    NetworkEvent::Connected(_) => continue,
+                    NetworkEvent::Disconnected(_) => return received_messages,
+                    NetworkEvent::Message(handle, msg) => {}
+                    NetworkEvent::Error(handle, err) => {
+                        panic!("{:?} on {:?}", err, &handle)
+                    }
+                },
+            }
+        }
+
+        received_messages
+        //vec![]
     }
 }
 
@@ -194,17 +180,25 @@ fn wait_for_players(
     state.set(GameState::InGame).unwrap();
 }
 
-const TIMESTEP_5_PER_SECOND: f64 = 30.0 / 60.0;
-
 fn main() {
     let mut app = App::new();
 
     GGRSPlugin::<GgrsConfig>::new()
         .with_input_system(input)
-        .with_rollback_schedule(Schedule::default().with_stage(
-            "ROLLBACK_STAGE",
-            SystemStage::single_threaded().with_system(move_players),
-        ))
+        .with_rollback_schedule(
+            Schedule::default().with_stage(
+                "ROLLBACK_STAGE",
+                SystemStage::single_threaded()
+                    .with_system_set(
+                        SystemSet::on_enter(GameState::InGame).with_system(spawn_players),
+                    )
+                    .with_system_set(
+                        SystemSet::on_update(GameState::InGame)
+                            .with_system(move_players.label(Systems::Move))
+                            .with_system(animate_sprite),
+                    ),
+            ),
+        )
         .register_rollback_component::<Transform>()
         .build(&mut app);
 
@@ -232,16 +226,13 @@ fn main() {
                 .set(ImagePlugin::default_nearest()),
         )
         .add_event::<NetworkEvent>()
-        .add_system_set(SystemSet::on_enter(GameState::Matchmaking).with_system(setup))
-        // .add_system_set(
-        //     SystemSet::on_update(GameState::Matchmaking).with_system(handle_network_events),
-        // )
-        .add_system_set(SystemSet::on_update(GameState::Matchmaking).with_system(wait_for_players))
-        .add_system_set(SystemSet::on_update(GameState::InGame).with_system(screen))
-        .add_system_set(SystemSet::on_update(GameState::InGame).with_system(animate_sprite))
+        .add_system_set(
+            SystemSet::on_enter(GameState::Matchmaking)
+                .with_system(setup)
+                .with_system(wait_for_players),
+        )
         .add_system_set(SystemSet::on_enter(GameState::InGame).with_system(spawn_players))
         .add_system_set(SystemSet::on_update(GameState::InGame).with_system(camera_follow))
-        .add_system_set(SystemSet::on_update(GameState::InGame).with_system(input2))
         .add_system(bevy::window::close_on_esc)
         .run();
 }

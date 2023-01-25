@@ -1,11 +1,9 @@
-use crate::client_api::{
-    Message as ApiMessage, Message_oneof_type, TableRowOperation_OperationType,
-};
+use crate::client_api::{Message as ApiMessage, Message_oneof_type};
 use crate::web_socket::{ConnectionHandle, NetworkEvent};
 use crate::ws::BuildConnection;
 use protobuf::Message;
 use serde::{Deserialize, Serialize};
-use spacetimedb::spacetimedb_lib::{PrimaryKey, TupleDef, TupleValue};
+use spacetimedb::spacetimedb_lib::{TupleDef, TupleValue};
 use spacetimedb::TypeValue;
 use tungstenite::Message as WsMessage;
 
@@ -126,9 +124,10 @@ fn make_args(of: Vec<TypeValue>) -> Vec<u8> {
 }
 
 pub(crate) fn serialize_msg(
-    con: &BuildConnection,
+    _con: &BuildConnection,
     msg: SpaceDbRequest,
 ) -> Option<tungstenite::Message> {
+    //TODO: Should switch protocol from _con, add support for binary
     match msg {
         SpaceDbRequest::FunctionCall { name, args } => {
             let call = FnCall { name, args };
@@ -231,11 +230,11 @@ pub(crate) fn process_msg(
                         },
                     ))
                 } else {
-                    return None;
+                    None
                 }
             }
-            WsMessage::Ping(_) | WsMessage::Pong(_) | WsMessage::Frame(_) => return None,
-            WsMessage::Close(_) => return None,
+            WsMessage::Ping(_) | WsMessage::Pong(_) | WsMessage::Frame(_) => None,
+            WsMessage::Close(_) => None,
         },
         Err(err) => {
             eprintln!("{}", err);

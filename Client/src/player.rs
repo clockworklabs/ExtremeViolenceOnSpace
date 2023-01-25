@@ -5,9 +5,9 @@ use bevy_ggrs::*;
 
 use crate::components::*;
 use crate::database::*;
-use crate::input::direction;
-use crate::sprites::AnimationTimer;
-use crate::{GgrsConfig, ImageAssets, MAP_SIZE};
+use crate::input::{direction, fire};
+use crate::sprites::{AnimationTimer, ImageAssets, SpritesheetAnimator};
+use crate::{GgrsConfig, MAP_SIZE};
 
 fn spawn_player(
     commands: &mut Commands,
@@ -16,9 +16,10 @@ fn spawn_player(
     player: PlayerId,
 ) {
     let (img, pos, move_dir) = match player {
-        PlayerId::One => (&asset.cowboy, Vec3::new(-200., 0., 100.), -Vec2::X),
-        PlayerId::Two => (&asset.alien, Vec3::new(200., 0., 100.), Vec2::X),
+        PlayerId::One => (&asset.cowboy, Vec3::new(200., 0., 100.), Vec2::X),
+        PlayerId::Two => (&asset.alien, Vec3::new(-200., 0., 100.), -Vec2::X),
     };
+    let player_animations = SpritesheetAnimator::new(player);
 
     //draw single texture from sprite sheet starting at index 0
     commands
@@ -40,24 +41,10 @@ fn spawn_player(
             TimerMode::Repeating,
         )))
         .insert(Player { handle: player })
+        .insert(player_animations)
         .insert(BulletReady(true))
         .insert(MoveDir(move_dir))
         .insert(Rollback::new(rip.next_id()));
-
-    // commands
-    //     .spawn(SpriteBundle {
-    //         transform: Transform::from_translation(pos),
-    //         sprite: Sprite {
-    //             custom_size: Some(Vec2::new(size, size)),
-    //             ..default()
-    //         },
-    //         texture: asset.load(texture),
-    //         ..default()
-    //     })
-    //     .insert(Player { handle: player })
-    //     .insert(BulletReady(true))
-    //     .insert(MoveDir(move_dir))
-    //     .insert(Rollback::new(rip.next_id()));
 }
 
 pub(crate) fn spawn_players(
@@ -113,7 +100,7 @@ pub(crate) fn move_players2(
 
         move_direction.0 = direction;
 
-        let move_speed = 0.13;
+        let move_speed = 20.13;
         let move_delta = direction * move_speed;
 
         let old_pos = transform.translation.xy();
@@ -136,6 +123,18 @@ fn fire_bullets(
         // Spawn bullet
     }
 }
+//
+// fn reload_bullet(
+//     inputs: Res<PlayerInputs<GgrsConfig>>,
+//     mut query: Query<(&mut BulletReady, &Player)>,
+// ) {
+//     for (mut can_fire, player) in query.iter_mut() {
+//         let (input, _) = inputs[player.handle];
+//         if !fire(input) {
+//             can_fire.0 = true;
+//         }
+//     }
+// }
 
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct LocalPlayerHandle(pub(crate) PlayerId);
