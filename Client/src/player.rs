@@ -1,21 +1,29 @@
 use bevy::math::Vec3Swizzles;
 use bevy::prelude::*;
-use bevy_ggrs::RollbackIdProvider;
-use bevy_ggrs::*;
+use std::env;
 
 use crate::components::*;
 use crate::database::*;
-use crate::input::{direction, fire};
-use crate::net::GgrsConfig;
+use crate::input::{direction, fire, input};
+use crate::net::WsClient;
 use crate::sprites::{AnimationTimer, ImageAssets, SpritesheetAnimator};
 use crate::{GameState, MAP_SIZE};
 
-fn spawn_player(
-    commands: &mut Commands,
-    asset: &Res<ImageAssets>,
-    rip: &mut ResMut<RollbackIdProvider>,
-    player: PlayerId,
-) {
+pub(crate) fn current_player() -> PlayerId {
+    env::args()
+        .skip(1)
+        .map(|x| {
+            if x == "two" {
+                PlayerId::Two
+            } else {
+                PlayerId::One
+            }
+        })
+        .next()
+        .unwrap_or(PlayerId::One)
+}
+
+fn spawn_player(commands: &mut Commands, asset: &Res<ImageAssets>, player: PlayerId) {
     let (img, pos, move_dir) = match player {
         PlayerId::One => (&asset.cowboy, Vec3::new(200., 0., 100.), Vec2::X),
         PlayerId::Two => (&asset.alien, Vec3::new(-200., 0., 100.), -Vec2::X),
@@ -41,17 +49,15 @@ fn spawn_player(
             0.1,
             TimerMode::Repeating,
         )))
-        .insert(Player { handle: player })
+        .insert(Player::new(player))
         .insert(player_animations)
         .insert(BulletReady(true))
-        .insert(MoveDir(move_dir))
-        .insert(Rollback::new(rip.next_id()));
+        .insert(MoveDir(move_dir));
 }
 
 pub(crate) fn spawn_players(
     mut commands: Commands,
     asset_server: Res<ImageAssets>,
-    mut rip: ResMut<RollbackIdProvider>,
     player_query: Query<Entity, With<Player>>,
     bullet_query: Query<Entity, With<Bullet>>,
 ) {
@@ -62,31 +68,48 @@ pub(crate) fn spawn_players(
         commands.entity(bullet).despawn_recursive();
     }
 
-    dbg!("spawn");
-    spawn_player(&mut commands, &asset_server, &mut rip, PlayerId::One);
-    spawn_player(&mut commands, &asset_server, &mut rip, PlayerId::Two);
+    dbg!("spawning players");
+    spawn_player(&mut commands, &asset_server, PlayerId::One);
+    spawn_player(&mut commands, &asset_server, PlayerId::Two);
 }
 
 pub(crate) fn move_players(
-    inputs: Res<PlayerInputs<GgrsConfig>>,
+    local_player: Option<Res<LocalPlayerHandle>>,
+    keys: Res<Input<KeyCode>>,
+    socket: ResMut<WsClient>,
     mut player_query: Query<(
         &mut SpritesheetAnimator,
         &mut TextureAtlasSprite,
         &mut Transform,
         &mut MoveDir,
-        &Player,
+        &mut Player,
     )>,
 ) {
-    for (mut animator, mut sprite, mut transform, mut move_direction, player) in
+    let local_player = if let Some(x) = local_player {
+        x
+    } else {
+        // Session hasn't started yet;
+        return;
+    };
+
+    for (mut animator, mut sprite, mut transform, mut move_direction, mut player) in
         player_query.iter_mut()
     {
-        let (input, _) = inputs[player.handle as usize];
-        let (direction, animation) = direction(animator.animation, input);
+        player.input = if player.handle == local_player.0 {
+            let input = input(&keys);
+            move_player(&socket.client, player.handle, input);
+            input
+        } else {
+            player.input
+        };
+
+        let (direction, animation) = direction(animator.animation, player.input);
         animator.set_state(animation, &mut sprite);
 
         if direction == Vec2::ZERO {
             continue;
         }
+        //dbg!(animation);
 
         move_direction.0 = direction;
 
@@ -102,13 +125,9 @@ pub(crate) fn move_players(
     }
 }
 
-pub(crate) fn reload_bullet(
-    inputs: Res<PlayerInputs<GgrsConfig>>,
-    mut query: Query<(&mut BulletReady, &Player)>,
-) {
+pub(crate) fn reload_bullet(mut query: Query<(&mut BulletReady, &Player)>) {
     for (mut can_fire, player) in query.iter_mut() {
-        let (input, _) = inputs[player.handle as usize];
-        if !fire(input) {
+        if !fire(player.input) {
             can_fire.0 = true;
         }
     }
@@ -116,26 +135,29 @@ pub(crate) fn reload_bullet(
 
 pub(crate) fn fire_bullets(
     mut commands: Commands,
-    inputs: Res<PlayerInputs<GgrsConfig>>,
     images: Res<ImageAssets>,
     mut player_query: Query<(&Transform, &Player, &mut BulletReady, &MoveDir)>,
-    mut rip: ResMut<RollbackIdProvider>,
 ) {
     for (transform, player, mut bullet_ready, move_dir) in player_query.iter_mut() {
-        let (input, _) = inputs[player.handle as usize];
-        //dbg!(fire(input), bullet_ready.0);
-        if fire(input) && bullet_ready.0 {
+        //dbg!(fire(player.input), bullet_ready.0);
+        if fire(player.input) && bullet_ready.0 {
             let player_pos = transform.translation.xy();
             let pos = player_pos + move_dir.0 * PLAYER_RADIUS + BULLET_RADIUS;
+            let bullet = if player.handle == PlayerId::One {
+                images.bullet_cowboy.clone()
+            } else {
+                images.bullet_alien.clone()
+            };
+
             commands.spawn((
                 Bullet,
-                Rollback::new(rip.next_id()),
                 *move_dir,
                 SpriteBundle {
                     transform: Transform::from_translation(pos.extend(200.))
                         .with_rotation(Quat::from_rotation_arc_2d(Vec2::X, move_dir.0)),
-                    texture: images.bullet.clone(),
+                    texture: bullet,
                     sprite: Sprite {
+                        //Making the bullets smaller
                         custom_size: Some(Vec2::new(1920.0 / 20.0, 1080.0 / 20.0)),
                         ..default()
                     },
@@ -154,8 +176,9 @@ pub(crate) fn move_bullet(mut query: Query<(&mut Transform, &MoveDir), With<Bull
     }
 }
 
-const PLAYER_RADIUS: f32 = 0.5;
-const BULLET_RADIUS: f32 = 0.025;
+// Very inaccurate. It make it more "realistic"!
+const PLAYER_RADIUS: f32 = 24.0;
+const BULLET_RADIUS: f32 = 0.25;
 
 pub(crate) fn kill_players(
     mut commands: Commands,

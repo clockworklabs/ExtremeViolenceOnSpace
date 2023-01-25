@@ -1,5 +1,10 @@
 //! A simplified implementation of the classic game (Extreme Violence)[http://www.geocities.ws/simesgreen/ev/index.html].
-mod bevy_ws;
+use crate::net::wait_for_players;
+use bevy::prelude::*;
+use bevy_asset_loader::prelude::*;
+
+use crate::sprites::{animate_sprite, ImageAssets};
+
 mod components;
 mod database;
 mod input;
@@ -7,17 +12,10 @@ mod net;
 mod player;
 mod sprites;
 
-use crate::bevy_ws::*;
 use crate::components::*;
-use crate::input::*;
+use crate::database::Player;
+use crate::net::*;
 use crate::player::*;
-
-use crate::net::{wait_for_players, GgrsConfig};
-use bevy::prelude::*;
-use bevy_asset_loader::prelude::*;
-use bevy_ggrs::GGRSPlugin;
-
-use crate::sprites::{animate_sprite, ImageAssets};
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
 enum GameState {
@@ -29,7 +27,7 @@ enum GameState {
 
 pub const PLAYER_SIZE: (f64, f64) = (3121.0, 816.0);
 
-const MAP_SIZE: i32 = 300;
+const MAP_SIZE: i32 = 1024 * 2;
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn((Camera2dBundle::default(), MainCamera));
@@ -57,38 +55,38 @@ fn interlude_timer(mut timer: ResMut<InterludeTimer>, mut state: ResMut<State<Ga
 
 fn main() {
     let mut app = App::new();
-
-    GGRSPlugin::<GgrsConfig>::new()
-        .with_input_system(input)
-        .with_rollback_schedule(
-            Schedule::default().with_stage(
-                "ROLLBACK_STAGE",
-                SystemStage::single_threaded()
-                    .with_system_set(State::<GameState>::get_driver())
-                    .with_system_set(
-                        SystemSet::on_enter(GameState::Interlude)
-                            .with_system(reset_interlude_timer),
-                    )
-                    .with_system_set(
-                        SystemSet::on_update(GameState::Interlude).with_system(interlude_timer),
-                    )
-                    .with_system_set(
-                        SystemSet::on_enter(GameState::InGame).with_system(spawn_players),
-                    )
-                    .with_system_set(
-                        SystemSet::on_update(GameState::InGame)
-                            .with_system(move_players)
-                            .with_system(reload_bullet)
-                            .with_system(fire_bullets.after(move_players).after(reload_bullet))
-                            .with_system(move_bullet)
-                            .with_system(kill_players.after(move_bullet).after(move_players)),
-                    ),
-            ),
-        )
-        .register_rollback_component::<Transform>()
-        .register_rollback_component::<BulletReady>()
-        .register_rollback_component::<MoveDir>()
-        .build(&mut app);
+    //
+    // GGRSPlugin::<GgrsConfig>::new()
+    //     .with_input_system(input)
+    //     .with_rollback_schedule(
+    //         Schedule::default().with_stage(
+    //             "ROLLBACK_STAGE",
+    //             SystemStage::single_threaded()
+    //                 .with_system_set(State::<GameState>::get_driver())
+    //                 .with_system_set(
+    //                     SystemSet::on_enter(GameState::Interlude)
+    //                         .with_system(reset_interlude_timer),
+    //                 )
+    //                 .with_system_set(
+    //                     SystemSet::on_update(GameState::Interlude).with_system(interlude_timer),
+    //                 )
+    //                 .with_system_set(
+    //                     SystemSet::on_enter(GameState::InGame).with_system(spawn_players),
+    //                 )
+    //                 .with_system_set(
+    //                     SystemSet::on_update(GameState::InGame)
+    //                         .with_system(move_players)
+    //                         .with_system(reload_bullet)
+    //                         .with_system(fire_bullets.after(move_players).after(reload_bullet))
+    //                         .with_system(move_bullet)
+    //                         .with_system(kill_players.after(move_bullet).after(move_players)),
+    //                 ),
+    //         ),
+    //     )
+    //     .register_rollback_component::<Transform>()
+    //     .register_rollback_component::<BulletReady>()
+    //     .register_rollback_component::<MoveDir>()
+    //     .build(&mut app);
 
     app.add_state(GameState::AssetLoading)
         .add_loading_state(
@@ -110,6 +108,23 @@ fn main() {
                     ..default()
                 })
                 .set(ImagePlugin::default_nearest()),
+        )
+        .add_event::<Player>()
+        .add_system_set(
+            SystemSet::on_enter(GameState::Interlude).with_system(reset_interlude_timer),
+        )
+        .add_system_set(SystemSet::on_update(GameState::Interlude).with_system(interlude_timer))
+        .add_system_set(SystemSet::on_enter(GameState::InGame).with_system(spawn_players))
+        .add_system_set(
+            SystemSet::on_update(GameState::InGame)
+                .with_system(move_players)
+                .with_system(reload_bullet)
+                .with_system(consume_messages)
+                .with_system(handle_network_events)
+                .with_system(listen_for_events)
+                .with_system(fire_bullets.after(move_players).after(reload_bullet))
+                .with_system(move_bullet)
+                .with_system(kill_players.after(move_bullet).after(move_players)),
         )
         .add_system_set(SystemSet::on_enter(GameState::Matchmaking).with_system(setup))
         .add_system_set(SystemSet::on_update(GameState::Matchmaking).with_system(wait_for_players))

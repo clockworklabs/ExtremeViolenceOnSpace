@@ -9,9 +9,9 @@ const DEFAULT_ANIMATION_FPS: f32 = 5.0;
 #[derive(AssetCollection, Resource)]
 pub(crate) struct ImageAssets {
     #[asset(path = "images/Bullet_alien.png")]
-    bullet_alien: Handle<Image>,
+    pub(crate) bullet_alien: Handle<Image>,
     #[asset(path = "images/Bullet_cowboy.png")]
-    pub(crate) bullet: Handle<Image>,
+    pub(crate) bullet_cowboy: Handle<Image>,
     #[asset(path = "images/Alien.png")]
     #[asset(texture_atlas(tile_size_x = 1459.0, tile_size_y = 1920., columns = 5, rows = 1))]
     pub(crate) alien: Handle<TextureAtlas>,
@@ -24,13 +24,13 @@ pub(crate) struct ImageAssets {
 #[derive(Component, Deref, DerefMut)]
 pub(crate) struct AnimationTimer(pub(crate) Timer);
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) enum Facing {
     Left,
     Right,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) enum Animation {
     Idle(Facing),
     Run(Facing),
