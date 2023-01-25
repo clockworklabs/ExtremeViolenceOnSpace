@@ -8,13 +8,15 @@ const DEFAULT_ANIMATION_FPS: f32 = 5.0;
 
 #[derive(AssetCollection, Resource)]
 pub(crate) struct ImageAssets {
+    #[asset(path = "images/Bullet_alien.png")]
+    bullet_alien: Handle<Image>,
     #[asset(path = "images/Bullet_cowboy.png")]
-    bullet: Handle<Image>,
+    pub(crate) bullet: Handle<Image>,
     #[asset(path = "images/Alien.png")]
-    #[asset(texture_atlas(tile_size_x = 1127., tile_size_y = 1920., columns = 5, rows = 1))]
+    #[asset(texture_atlas(tile_size_x = 1459.0, tile_size_y = 1920., columns = 5, rows = 1))]
     pub(crate) alien: Handle<TextureAtlas>,
     #[asset(path = "images/CowBoy.png")]
-    #[asset(texture_atlas(tile_size_x = 1127., tile_size_y = 1920., columns = 5, rows = 1))]
+    #[asset(texture_atlas(tile_size_x = 1459.0, tile_size_y = 1920., columns = 5, rows = 1))]
     pub(crate) cowboy: Handle<TextureAtlas>,
 }
 
@@ -49,8 +51,8 @@ impl Animation {
                 Facing::Right => &[2],
             },
             Animation::Run(dir) => match dir {
-                Facing::Left => &[-1, -2, -3],
-                Facing::Right => &[1, 2, 3],
+                Facing::Left => &[-1, -2, -3, -2],
+                Facing::Right => &[1, 2, 3, 2],
             },
             Animation::Fire(dir) => match dir {
                 Facing::Left => &[-1, -4],
@@ -98,7 +100,7 @@ impl SpritesheetAnimator {
         };
 
         Self {
-            timer: AnimationTimer(Timer::from_seconds(1.0 / 30.0, TimerMode::Repeating)),
+            timer: AnimationTimer(Timer::from_seconds(0.6, TimerMode::Repeating)),
             animation: Animation::Idle(dir),
             cur_frame_idx: 0,
             player,

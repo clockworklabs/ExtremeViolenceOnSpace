@@ -92,7 +92,7 @@ impl Client {
                     match (token, identity) {
                         (Some(Ok(token)), Some(Ok(identity))) => {
                             let t = IdentityTokenJson::new(identity, token);
-                            return Ok(con.with_auth(t));
+                            Ok(con.with_auth(t))
                         }
                         _ => {
                             warn!("Response not return auth headers");

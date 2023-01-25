@@ -31,6 +31,31 @@ pub fn input(_: In<ggrs::PlayerHandle>, keys: Res<Input<KeyCode>>) -> u8 {
     input
 }
 
+pub(crate) fn direction(animation: Animation, input: u8) -> (Vec2, Animation) {
+    let mut direction = Vec2::ZERO;
+    let mut animation = Animation::Run(animation.facing());
+
+    if input & INPUT_UP != 0 {
+        direction.y += 1.;
+    }
+    if input & INPUT_DOWN != 0 {
+        direction.y -= 1.;
+    }
+    if input & INPUT_RIGHT != 0 {
+        direction.x += 1.;
+        animation = animation.change(Facing::Right);
+    }
+    if input & INPUT_LEFT != 0 {
+        direction.x -= 1.;
+        animation = animation.change(Facing::Left);
+    }
+    (direction.normalize_or_zero(), animation)
+}
+
+pub fn fire(input: u8) -> bool {
+    input & INPUT_FIRE != 0
+}
+
 pub(crate) fn input2(
     keys: Res<Input<KeyCode>>,
     mut socket: ResMut<WsClient>,
@@ -92,25 +117,4 @@ pub(crate) fn input2(
 
         transform.translation += move_delta;
     }
-}
-
-pub fn direction(input: u8) -> Vec2 {
-    let mut direction = Vec2::ZERO;
-    if input & INPUT_UP != 0 {
-        direction.y += 1.;
-    }
-    if input & INPUT_DOWN != 0 {
-        direction.y -= 1.;
-    }
-    if input & INPUT_RIGHT != 0 {
-        direction.x += 1.;
-    }
-    if input & INPUT_LEFT != 0 {
-        direction.x -= 1.;
-    }
-    direction.normalize_or_zero()
-}
-
-pub fn fire(input: u8) -> bool {
-    input & INPUT_FIRE != 0
 }

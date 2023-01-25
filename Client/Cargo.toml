@@ -15,7 +15,5 @@ bevy = { version = "0.9.1", features = ["dynamic"] }
 ggrs = { git = "https://github.com/gschup/ggrs", features=["sync-send"]}
 bevy_ggrs = { git = "https://github.com/gschup/bevy_ggrs" , features = ["wasm-bindgen"]}
 bevy_asset_loader = { version = "0.14.1", features = ["2d"] }
-matchbox_socket = { version = "0.5.0", features = ["ggrs-socket"] }
-
-
 log = "0.4.17"
+matchbox_socket = { version = "0.5.0", features = ["ggrs-socket"] }

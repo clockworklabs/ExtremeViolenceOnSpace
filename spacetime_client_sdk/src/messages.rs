@@ -3,7 +3,7 @@ use crate::web_socket::{ConnectionHandle, NetworkEvent};
 use crate::ws::BuildConnection;
 use protobuf::Message;
 use serde::{Deserialize, Serialize};
-use spacetimedb::spacetimedb_lib::{TupleDef, TupleValue};
+use spacetimedb::spacetimedb_lib::TupleDef;
 use spacetimedb::TypeValue;
 use tungstenite::Message as WsMessage;
 
@@ -110,17 +110,6 @@ pub enum SpaceDbRequest {
     Ping,
     Pong,
     FunctionCall { name: String, args: Vec<TypeValue> },
-}
-
-fn make_args(of: Vec<TypeValue>) -> Vec<u8> {
-    let mut bytes = Vec::new();
-
-    let args = TupleValue {
-        elements: of.into_boxed_slice(),
-    };
-    args.encode(&mut bytes);
-
-    bytes
 }
 
 pub(crate) fn serialize_msg(

@@ -1,3 +1,4 @@
+use crate::database::PlayerId;
 use bevy::prelude::*;
 
 #[derive(Component, Reflect, Default)]
@@ -12,6 +13,12 @@ pub struct MoveDir(pub Vec2);
 /// Used to help identify our main camera
 #[derive(Component)]
 pub struct MainCamera;
+
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LocalPlayerHandle(pub(crate) PlayerId);
+
+#[derive(Resource, Default)]
+pub(crate) struct InterludeTimer(pub(crate) usize);
 
 #[derive(SystemLabel, Debug, Clone, Hash, Eq, PartialEq)]
 pub enum Systems {
