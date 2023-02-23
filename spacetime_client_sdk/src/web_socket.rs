@@ -229,9 +229,9 @@ impl Client {
 
 #[cfg(test)]
 mod tests {
-    use tokio::time::{sleep, Duration};
-
     use super::*;
+    use tokio::time::{sleep, Duration};
+    use tungstenite::Message;
 
     #[test]
     fn test_connect() {
