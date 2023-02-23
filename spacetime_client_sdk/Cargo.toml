@@ -5,7 +5,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-spacetimedb = { version = "0.3.1", path = "../../SpacetimeDB/crates/spacetimedb-bindings"}
+spacetimedb = { version = "0.3.1", path = "../../SpacetimeDB/crates/bindings"}
 
 anyhow = "1.0.68"
 base64 = "0.21.0"
