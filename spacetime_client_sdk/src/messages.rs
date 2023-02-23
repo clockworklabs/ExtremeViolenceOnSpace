@@ -50,12 +50,12 @@ pub struct TableUpdateJson {
     pub table_row_operations: Vec<TableRowOperationJson>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TableRowOperationJson {
-    pub op: TableOp,
-    pub row_pk: String,
-    pub row: Vec<TypeValue>,
-}
+// #[derive(Debug, Clone, Serialize, Deserialize)]
+// pub struct TableRowOperationJson {
+//     pub op: TableOp,
+//     pub row_pk: String,
+//     pub row: Vec<TypeValue>,
+// }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubscriptionUpdateJson {

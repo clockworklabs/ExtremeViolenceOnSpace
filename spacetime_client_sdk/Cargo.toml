@@ -5,7 +5,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-spacetimedb = { version = "0.3.1", path = "../../SpacetimeDB/crates/spacetimedb-bindings"}
+spacetimedb = { version = "0.3.2", path = "../../SpacetimeDB/crates/bindings"}
 
 anyhow = "1.0.68"
 base64 = "0.21.0"
@@ -17,7 +17,7 @@ hyper = "0.14.18"
 log = "0.4.17"
 #MUST match the version of protobuf-codegen-pure in protospace
 protobuf = "2.28.0"
-serde = "1.0.152"
+serde = { version ="1.0.152", features = ["derive"]}
 serde_json = "1.0.91"
 sha1 = "0.10.5"
 sha3 = "0.10.0"
